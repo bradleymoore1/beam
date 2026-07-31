@@ -9,7 +9,7 @@
 //   cascade, so blocks-solved looks stalled and then teleports to done.
 
 import { LTDecoder } from "../shared/fountain";
-import { fnv1a, parseFrame } from "../shared/protocol";
+import { fnv1a, parseFrame, type FrameHeader } from "../shared/protocol";
 
 const OVERHEAD_EST = 1.18; // expected frames ≈ K × this (robust-soliton ε)
 
@@ -40,11 +40,12 @@ startBtn.onclick = () => void start();
 
 async function start() {
   if (!navigator.mediaDevices?.getUserMedia) {
-    // On insecure origins the API doesn't exist AT ALL — this is the plain-
-    // http-over-LAN case. localhost is exempt; other hosts need https.
+    // On insecure origins the API doesn't exist AT ALL. The camera requires
+    // a secure context: the app must be opened from its installed home
+    // screen icon (it's served over real HTTPS, then runs fully offline).
     stats.textContent =
-      "✗ camera needs a secure context — this page must be served over " +
-      "https to use the camera from another device (npm run dev:https).";
+      "✗ camera needs a secure context — open Beam from the home screen " +
+      "icon, or from the https:// page it was installed from.";
     return;
   }
   const captureWidth = Number((document.getElementById("cfg-width") as HTMLSelectElement).value);
@@ -159,26 +160,82 @@ function onDecoded(bytes: Uint8Array) {
     const payload = decoder.assemble()!;
     const seconds = (performance.now() - startTs) / 1000;
     const ok = fnv1a(payload) === header.payloadFnv;
-    finish(payload, ok, seconds, header.totalLen);
+    finish(payload, header, ok, seconds);
   }
 }
 
-function finish(payload: Uint8Array, hashOk: boolean, seconds: number, totalLen: number) {
+function detectMime(bytes: Uint8Array): string {
+  if (bytes.length >= 4 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) return "image/png";
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";
+  if (bytes.length >= 3 && bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46) return "image/gif";
+  if (bytes.length >= 4 && bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46) return "application/pdf";
+  if (bytes.length >= 4 && bytes[0] === 0x50 && bytes[1] === 0x4b && bytes[2] === 0x03 && bytes[3] === 0x04) return "application/zip";
+  return "application/octet-stream";
+}
+
+function guessExtension(mime: string): string {
+  if (mime === "image/png") return "png";
+  if (mime === "image/jpeg") return "jpg";
+  if (mime === "image/gif") return "gif";
+  if (mime === "application/pdf") return "pdf";
+  if (mime === "application/zip") return "zip";
+  return "bin";
+}
+
+function finish(payload: Uint8Array, header: FrameHeader, hashOk: boolean, seconds: number) {
   done = true;
   captureGen++;
   stream?.getTracks().forEach((t) => t.stop());
   preview.style.display = "none";
   bar.style.width = "100%";
-  const kb = Math.round(totalLen / 1024);
-  const rate = (totalLen / 1024 / seconds).toFixed(1);
-  stats.textContent = `${kb} KB in ${seconds.toFixed(1)} s · ${rate} KB/s · hash ${hashOk ? "verified ✓" : "MISMATCH ✗"}`;
+  const kb = Math.round(header.totalLen / 1024);
+  const rate = (header.totalLen / 1024 / seconds).toFixed(1);
+  stats.textContent = `${header.name} · ${kb} KB in ${seconds.toFixed(1)} s · ${rate} KB/s · hash ${hashOk ? "verified ✓" : "MISMATCH ✗"}`;
+
+  navigator.vibrate?.(200);
+
   const heading = document.createElement("div");
   heading.className = "done";
   heading.textContent = "Transfer Complete!";
-  const img = document.createElement("img");
-  img.className = "received";
-  img.src = URL.createObjectURL(new Blob([payload as BlobPart], { type: "image/png" }));
-  result.append(heading, img);
+
+  const name = header.name && !header.name.includes("\uFFFD")
+    ? header.name
+    : `received_file.${guessExtension(detectMime(payload))}`;
+  const file = new File([payload as BlobPart], name, { type: detectMime(payload) });
+  const url = URL.createObjectURL(file);
+
+  const actions = document.createElement("div");
+  actions.className = "result-actions";
+
+  const downloadBtn = document.createElement("a");
+  downloadBtn.href = url;
+  downloadBtn.download = name;
+  downloadBtn.className = "button";
+  downloadBtn.textContent = "Download";
+  downloadBtn.style.flex = "1";
+  actions.append(downloadBtn);
+
+  // iOS Safari ignores the download attribute — the share sheet is the
+  // reliable "Save to Files" path on iPhone.
+  if (navigator.canShare?.({ files: [file] })) {
+    const shareBtn = document.createElement("button");
+    shareBtn.className = "button button-secondary";
+    shareBtn.textContent = "Share / Save";
+    shareBtn.style.flex = "1";
+    shareBtn.onclick = () => {
+      void navigator.share({ files: [file] }).catch(() => undefined);
+    };
+    actions.append(shareBtn);
+  }
+
+  result.append(heading, actions);
+
+  if (file.type.startsWith("image/")) {
+    const img = document.createElement("img");
+    img.className = "received";
+    img.src = url;
+    result.append(img);
+  }
 }
 
 function updateStats() {

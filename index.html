@@ -1,23 +1,39 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Optical Transfer — fountain-coded QR file transfer</title>
-    <link rel="stylesheet" href="./shared/style.css" />
-  </head>
-  <body>
-    <h1>DECIMEN <small>— Fountain QR File Transfer (PoC)</small></h1>
-    <p class="hint">
-      Send a file between two devices using nothing but a screen and a camera.
-      Open <a href="./send/">send</a> on the device with the file (a laptop is
-      ideal) and <a href="./receive/">receive</a> on a phone, then point the
-      phone's camera at the flickering code.
-    </p>
-    <p class="hint">
-      No network path between the devices is used — the payload travels as
-      light. Fountain coding means the receiver can drop any frames, in any
-      order, and still reconstruct the file.
-    </p>
-  </body>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#0a0a0f">
+    <meta name="description" content="Beam — transfer any file between devices using light. No internet, no Bluetooth, no pairing.">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-title" content="Beam">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <link rel="icon" type="image/png" href="./icon-192x192.png">
+    <link rel="apple-touch-icon" href="./icon-180x180.png">
+    <link rel="manifest" href="%BASE_URL%manifest.webmanifest">
+    <title>Beam — Transfer files using light</title>
+    <link rel="stylesheet" href="./shared/style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>Beam</h1>
+        <h2>Transfer files using light.</h2>
+        <p class="explanation">
+            One screen displays any file as an animated stream of QR codes.
+            Another device points its camera at it and reconstructs the file —
+            byte for byte, name included. No internet, no Bluetooth, no pairing.
+        </p>
+        <div class="action-buttons">
+            <a href="./send/" class="button">Send a file</a>
+            <a href="./receive/" class="button">Receive a file</a>
+        </div>
+        <p class="hint footer-hint">Works fully offline once installed. On iPhone: tap Share → Add to Home Screen.</p>
+    </div>
+    <script>
+        if ("serviceWorker" in navigator) {
+            navigator.serviceWorker.register("%BASE_URL%sw.js").catch(function () {});
+        }
+    </script>
+</body>
 </html>

@@ -2,23 +2,36 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Optical Transfer — send</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no" />
+    <meta name="theme-color" content="#0a0a0f" />
+    <meta name="description" content="Beam — send any file using light. No internet, no Bluetooth, no pairing." />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Beam" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <link rel="icon" type="image/png" href="../icon-192x192.png" />
+    <link rel="apple-touch-icon" href="../icon-180x180.png" />
+    <link rel="manifest" href="%BASE_URL%manifest.webmanifest" />
+    <title>Beam — Send</title>
     <link rel="stylesheet" href="../shared/style.css" />
   </head>
   <body>
-    <h1>DECIMEN <small>— Fountain QR File Transfer</small></h1>
-    <div class="hint" id="specs">loading payload…</div>
+    <a href="../" class="back-link">← Home</a>
+    <h1>Beam</h1>
+    <h2>Send any file</h2>
+
+    <div id="dropzone" class="dropzone">
+      <span class="icon">⬆️</span>
+      <p>Drag &amp; drop a file here</p>
+      <div class="hint">…or tap to pick one. Any file type, any size.</div>
+      <input type="file" id="file-input" style="display: none;" />
+    </div>
+
+    <div class="hint" id="specs">No file loaded yet</div>
+
     <details class="settings">
-      <summary>Settings</summary>
+      <summary>Tuning</summary>
       <div class="row">
-        <label>
-          payload
-          <select id="cfg-payload">
-            <option value="../success.png" selected>512 KB image</option>
-            <option value="../success-2mb.png">2 MB image</option>
-          </select>
-        </label>
         <label>
           tx fps
           <select id="cfg-fps">
@@ -38,7 +51,7 @@
             <option selected>1465</option>
             <option>1850</option>
             <option>2331</option>
-            <option>2953</option>
+            <option>2833</option>
           </select>
         </label>
         <label>
@@ -60,11 +73,18 @@
         session id in the frame headers; that's the fountain protocol's gift).
       </div>
     </details>
-    <div class="stage"><canvas id="qr" width="16" height="16"></canvas></div>
+
+    <div class="stage" id="stage" style="display: none;"><canvas id="qr" width="16" height="16"></canvas></div>
+
     <div class="hint">
       Max screen brightness helps. The stream loops forever — stop when the
       receiver says done.
     </div>
+    <script>
+        if ("serviceWorker" in navigator) {
+            navigator.serviceWorker.register("%BASE_URL%sw.js").catch(function () {});
+        }
+    </script>
     <script type="module" src="./main.ts"></script>
   </body>
 </html>

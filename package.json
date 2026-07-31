@@ -1,9 +1,9 @@
 {
-  "name": "decimen-optical-transfer",
+  "name": "beam",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.0.0",
   "license": "MIT",
-  "description": "Proof of concept: file transfer between two devices using fountain-coded animated QR codes — screen to camera, no network.",
+  "description": "Transfer files between devices using nothing but light — fountain-coded animated QR codes, screen to camera, no network.",
   "type": "module",
   "scripts": {
     "dev": "vite",

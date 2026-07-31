@@ -2,19 +2,29 @@
 // handshake — the receiver locks onto a stream mid-flight, and a new session
 // id on any frame simply starts a fresh transfer.
 //
-// Layout (little-endian), 20 bytes, followed by `blockLen` payload bytes:
-//   0  u8   magic 0xD1
-//   1  u8   magic 0x0C
-//   2  u16  sessionId   random per sender start
-//   4  u32  seq         drives the fountain PRNG (see fountain.ts)
-//   8  u16  k           source block count
-//  10  u16  blockLen    payload bytes per frame
-//  12  u32  totalLen    file length in bytes
-//  16  u32  payloadFnv  FNV-1a of the whole file — verified on completion
+// Layout (little-endian), 20 + 100 bytes, followed by `blockLen` payload:
+//   0   u8   magic 0xD1
+//   1   u8   magic 0x0C
+//   2   u16  sessionId   random per sender start
+//   4   u32  seq         drives the fountain PRNG (see fountain.ts)
+//   8   u16  k           source block count
+//  10   u16  blockLen    payload bytes per frame
+//  12   u32  totalLen    file length in bytes
+//  16   u32  payloadFnv  FNV-1a of the whole file — verified on completion
+//  20  100B  name        original file name, UTF-8, NUL-padded
+//        ↓                                        ↓
+//        └──────── header(120) ────────────┘  blockLen
+//
+// The file name rides along so ANY file type — .mov, .docx, .app, whatever —
+// is saved back with its real name, not a guess from magic bytes.
 
-export const HEADER_LEN = 20;
+export const NAME_LEN = 100;
+export const HEADER_LEN = 20 + NAME_LEN;
 const MAGIC0 = 0xd1;
 const MAGIC1 = 0x0c;
+
+const nameEncoder = new TextEncoder();
+const nameDecoder = new TextDecoder("utf-8", { fatal: false });
 
 export interface FrameHeader {
   sessionId: number;
@@ -23,6 +33,22 @@ export interface FrameHeader {
   blockLen: number;
   totalLen: number;
   payloadFnv: number;
+  name: string;
+}
+
+function encodeName(name: string): Uint8Array {
+  const out = new Uint8Array(NAME_LEN);
+  const raw = nameEncoder.encode(name);
+  let len = Math.min(NAME_LEN, raw.length);
+  while (len > 0 && (raw[len - 1]! & 0xc0) === 0x80) len--; // don't split a multibyte char
+  out.set(raw.subarray(0, len));
+  return out;
+}
+
+function decodeName(raw: Uint8Array): string {
+  let end = NAME_LEN;
+  while (end > 0 && raw[end - 1] === 0) end--;
+  return nameDecoder.decode(raw.subarray(0, end));
 }
 
 export function packFrame(h: FrameHeader, block: Uint8Array): Uint8Array {
@@ -36,6 +62,7 @@ export function packFrame(h: FrameHeader, block: Uint8Array): Uint8Array {
   dv.setUint16(10, h.blockLen, true);
   dv.setUint32(12, h.totalLen, true);
   dv.setUint32(16, h.payloadFnv, true);
+  out.set(encodeName(h.name), 20);
   out.set(block, HEADER_LEN);
   return out;
 }
@@ -53,6 +80,7 @@ export function parseFrame(
     blockLen: dv.getUint16(10, true),
     totalLen: dv.getUint32(12, true),
     payloadFnv: dv.getUint32(16, true),
+    name: decodeName(bytes.subarray(20, 20 + NAME_LEN)),
   };
   if (header.k === 0 || header.blockLen === 0 || header.totalLen === 0) return null;
   if (bytes.length !== HEADER_LEN + header.blockLen) return null;

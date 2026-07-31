@@ -1,50 +1,60 @@
-// Sender: turn a file into an endless fountain-coded QR stream.
-//
-// Tuning notes from the experiments this PoC is distilled from:
-// - Frame payload sets the QR version; denser wins on goodput as long as the
-//   receiver can still decode it. 1465 bytes ≈ V27 is a safe middle ground
-//   for arbitrary monitors; 2953 (V40) is the ceiling and works phone-to-
-//   phone at close range.
-// - The mask pattern is pinned (any declared mask is valid to a decoder);
-//   this skips the spec's 8-way mask evaluation and speeds generation ~4×.
-// - Displays need each frame shown for ≥2 refresh cycles or captures catch
-//   the transition; 24 fps on a 60 Hz screen is comfortable.
-// - Error correction stays at L by default: the fountain layer already
-//   handles erasures, and a frame is either decoded whole or discarded.
-
 import QRCode from "qrcode";
 import { LTEncoder } from "../shared/fountain";
 import { HEADER_LEN, fnv1a, packFrame, type FrameHeader } from "../shared/protocol";
 
-const MARGIN = 4; // quiet-zone modules
+const MARGIN = 4;
 const LOOKAHEAD = 3;
 
+const dropzone = document.getElementById("dropzone")!;
+const fileInput = document.getElementById("file-input") as HTMLInputElement;
+const stage = document.getElementById("stage")!;
 const canvas = document.getElementById("qr") as HTMLCanvasElement;
 const specs = document.getElementById("specs")!;
-const cfgPayload = document.getElementById("cfg-payload") as HTMLSelectElement;
 const cfgFps = document.getElementById("cfg-fps") as HTMLSelectElement;
 const cfgBytes = document.getElementById("cfg-bytes") as HTMLSelectElement;
 const cfgEcc = document.getElementById("cfg-ecc") as HTMLSelectElement;
 const cfgSize = document.getElementById("cfg-size") as HTMLInputElement;
 
-const payloadCache = new Map<string, Uint8Array>();
-let generation = 0; // bumped on every restart; stale loops see it and die
-
-async function loadPayload(url: string): Promise<Uint8Array | null> {
-  const hit = payloadCache.get(url);
-  if (hit) return hit;
-  const res = await fetch(url);
-  if (!res.ok) return null;
-  const bytes = new Uint8Array(await res.arrayBuffer());
-  payloadCache.set(url, bytes);
-  return bytes;
-}
+let generation = 0;
+let currentPayload: Uint8Array | null = null;
+let currentFileName = "";
 
 async function main() {
-  for (const el of [cfgPayload, cfgFps, cfgBytes, cfgEcc, cfgSize]) {
-    el.addEventListener("change", () => void startStream());
+  for (const el of [cfgFps, cfgBytes, cfgEcc, cfgSize]) {
+    el.addEventListener("change", () => {
+      if (currentPayload) {
+        void startStream(currentPayload);
+      }
+    });
   }
-  await startStream();
+
+  dropzone.addEventListener("click", () => fileInput.click());
+  
+  dropzone.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    dropzone.style.borderColor = "#fff";
+  });
+  
+  dropzone.addEventListener("dragleave", () => {
+    dropzone.style.borderColor = "#666";
+  });
+  
+  dropzone.addEventListener("drop", (e) => {
+    e.preventDefault();
+    dropzone.style.borderColor = "#666";
+    const file = e.dataTransfer?.files[0];
+    if (file) {
+      void handleFile(file);
+    }
+  });
+
+  fileInput.addEventListener("change", () => {
+    const file = fileInput.files?.[0];
+    if (file) {
+      void handleFile(file);
+    }
+  });
+
   try {
     await (navigator as Navigator & { wakeLock?: { request(t: "screen"): Promise<unknown> } })
       .wakeLock?.request("screen");
@@ -53,14 +63,19 @@ async function main() {
   }
 }
 
-async function startStream() {
+async function handleFile(file: File) {
+  specs.textContent = `Loading ${file.name}...`;
+  currentFileName = file.name;
+  const buffer = await file.arrayBuffer();
+  currentPayload = new Uint8Array(buffer);
+  dropzone.style.display = "none";
+  stage.style.display = "block";
+  await startStream(currentPayload);
+}
+
+async function startStream(payload: Uint8Array) {
   const gen = ++generation;
-  const payload = await loadPayload(cfgPayload.value);
-  if (!payload) {
-    specs.textContent = `✗ couldn't load ${cfgPayload.value}`;
-    return;
-  }
-  if (gen !== generation) return; // superseded while fetching
+  if (gen !== generation) return;
   const txFps = Number(cfgFps.value);
   const frameBytes = Number(cfgBytes.value);
   const ecc = cfgEcc.value as "L" | "M" | "Q" | "H";
@@ -76,9 +91,10 @@ async function startStream() {
     blockLen,
     totalLen: payload.length,
     payloadFnv: fnv1a(payload),
+    name: currentFileName,
   };
 
-  let version: number | undefined; // locked after the first frame
+  let version: number | undefined;
   let modules = 0;
   let scale = 1;
   const staging = document.createElement("canvas");
@@ -111,8 +127,8 @@ async function startStream() {
       modules = qr.modules.size;
       sizeCanvas();
       specs.textContent =
-        `${txFps} FPS · ${frameBytes} bytes per frame · V${version} · ECC ${ecc} · ` +
-        `${Math.round(payload.length / 1024)} KB payload · K=${encoder.k}`;
+        `${currentFileName} (${Math.round(payload.length / 1024)} KB) · ` +
+        `${txFps} FPS · ${frameBytes} bytes/frame · V${version} · ECC ${ecc} · K=${encoder.k}`;
     }
     const size = qr.modules.size;
     const data = qr.modules.data;
@@ -131,11 +147,10 @@ async function startStream() {
   };
 
   const pump = () => {
-    if (gen !== generation) return; // superseded by a settings change
+    if (gen !== generation) return;
     try {
       while (queue.length < LOOKAHEAD) queue.push(makeFrame());
     } catch (err) {
-      // e.g. frame bytes over capacity for the chosen ECC level
       specs.textContent = `✗ ${err instanceof Error ? err.message : String(err)}`;
       return;
     }
@@ -159,7 +174,7 @@ async function startStream() {
     ctx.imageSmoothingEnabled = false;
     ctx.drawImage(staging, 0, 0, canvas.width, canvas.height);
     nextAt += interval;
-    if (now - nextAt > 3 * interval) nextAt = now + interval; // fell behind — don't burst
+    if (now - nextAt > 3 * interval) nextAt = now + interval;
   };
   requestAnimationFrame(tick);
 }

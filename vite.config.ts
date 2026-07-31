@@ -2,14 +2,24 @@ import { defineConfig } from "vite";
 import basicSsl from "@vitejs/plugin-basic-ssl";
 import { resolve } from "node:path";
 
-// HTTPS always: the receiver needs getUserMedia, and on insecure origins
-// that API does not exist at all — a phone reaching this server over the LAN
-// gets no camera on plain http (browser rule, localhost-only exemption).
-// The generated cert is self-signed: tap through the warning once on the
-// phone and the page is still a secure context, so the camera works.
+// The app lives at a GitHub Pages subpath (/beam/). The base must be
+// absolute: a relative base breaks service-worker scope and registration
+// from the send/ and receive/ subpages, which kills offline after "Add to
+// Home Screen". One HTTPS load, cached forever — that's the whole trick.
+// The pages use %BASE_URL% for the manifest + SW registration, so a repo
+// rename needs only this one constant.
+//
+// The service worker and manifest are plain files in public/ — no workbox.
+// (workbox-build 7.4.1 deadlocks on Node 22 under load; a hand-written SW
+// is deterministic and does exactly what this app needs: precache the
+// shell, cache-first everything else, no network after first load.)
 export default defineConfig({
-  base: "./",
-  plugins: [basicSsl()],
+  base: "/beam/",
+  plugins: [
+    // Self-signed dev cert only — never shipped; the deployed app is real
+    // HTTPS via GitHub Pages.
+    basicSsl(),
+  ],
   build: {
     rollupOptions: {
       input: {
@@ -20,4 +30,5 @@ export default defineConfig({
     },
   },
   server: { host: true },
+  preview: { host: true, allowedHosts: true },
 });
