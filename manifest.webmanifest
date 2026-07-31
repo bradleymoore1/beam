@@ -1,0 +1,23 @@
+{
+  "name": "Beam — Transfer files using light",
+  "short_name": "Beam",
+  "description": "Transfer any file between devices using light — no internet, no Bluetooth, no pairing",
+  "theme_color": "#0a0a0f",
+  "background_color": "#0a0a0f",
+  "display": "standalone",
+  "start_url": ".",
+  "scope": "./",
+  "icons": [
+    {
+      "src": "icon-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "icon-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}
