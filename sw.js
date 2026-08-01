@@ -6,7 +6,7 @@
 
 // Bump this when the app shell changes. Hashed Vite assets are filled into
 // this cache at runtime after the new shell is installed.
-const CACHE = "beam-v6";
+const CACHE = "beam-v7";
 const SHELL = ["./", "./index.html", "./send/", "./receive/", "./beacon/"];
 
 self.addEventListener("install", (event) => {
@@ -29,6 +29,21 @@ self.addEventListener("activate", (event) => {
 
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET" || new URL(event.request.url).origin !== self.location.origin) return;
+  // Navigations must check the network first. A cache-first HTML shell can
+  // outlive the hashed CSS/JS it references after a Pages deployment and
+  // leave the app unstyled or unable to start the camera.
+  if (event.request.mode === "navigate") {
+    event.respondWith(
+      fetch(event.request)
+        .then((response) => {
+          const clone = response.clone();
+          event.waitUntil(caches.open(CACHE).then((cache) => cache.put(event.request, clone)));
+          return response;
+        })
+        .catch(() => caches.match(event.request).then((cached) => cached || caches.match("./"))),
+    );
+    return;
+  }
   event.respondWith(
     caches.match(event.request).then((cached) => {
       if (cached) return cached;
