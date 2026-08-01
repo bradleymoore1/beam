@@ -31,6 +31,9 @@ const result = document.getElementById("result")!;
 const settings = document.getElementById("settings") as HTMLDetailsElement;
 const metricsEl = document.getElementById("metrics")!;
 const metric = (id: string) => document.getElementById(id)!;
+const scanSourceSelect = document.getElementById("cfg-source") as HTMLSelectElement;
+const captureWidthSelect = document.getElementById("cfg-width") as HTMLSelectElement;
+const captureFpsSelect = document.getElementById("cfg-capfps") as HTMLSelectElement;
 
 let stream: MediaStream | null = null;
 let decoder: LTDecoder | null = null;
@@ -43,6 +46,7 @@ let startInFlight = false;
 let statsTimer: number | null = null;
 let resultUrl: string | null = null;
 let cameraZoom: CameraZoomController | null = null;
+let scanMaxSymbols = 4;
 
 type WakeLock = { release: () => Promise<void> };
 let wakeLock: WakeLock | null = null;
@@ -53,6 +57,17 @@ const captureTimes: number[] = [];
 const decodeTimes: number[] = [];
 
 startBtn.onclick = () => void start();
+scanSourceSelect.onchange = () => {
+  if (scanSourceSelect.value === "paper") {
+    captureWidthSelect.value = "1920";
+    captureFpsSelect.value = "30";
+    stats.textContent = "paper mode — move across the sheet; codes scan in any order";
+  } else {
+    captureWidthSelect.value = "1280";
+    captureFpsSelect.value = "60";
+    stats.textContent = "point the camera at the sender's code";
+  }
+};
 
 async function start() {
   if (startInFlight || stream) return;
@@ -68,9 +83,11 @@ async function start() {
   startInFlight = true;
   stopCapture();
   resetTransfer();
-  const captureWidth = Number((document.getElementById("cfg-width") as HTMLSelectElement).value);
-  const captureFps = Number((document.getElementById("cfg-capfps") as HTMLSelectElement).value);
+  const captureWidth = Number(captureWidthSelect.value);
+  const captureFps = Number(captureFpsSelect.value);
   const workerCount = Number((document.getElementById("cfg-workers") as HTMLSelectElement).value);
+  const scanSource = scanSourceSelect.value;
+  scanMaxSymbols = scanSource === "paper" ? 12 : 4;
   startBtn.disabled = true;
   stats.textContent = "Requesting camera…";
   const base: MediaTrackConstraints = {
@@ -125,10 +142,18 @@ async function start() {
     const w = new Worker(new URL("./worker.ts", import.meta.url), { type: "module" });
     const slot = i;
     w.onmessage = (e: MessageEvent) => {
-      const { id, bytes } = e.data as { id: number; bytes: Uint8Array | null };
+      const { id, bytes, frames } = e.data as {
+        id: number;
+        bytes?: Uint8Array | null;
+        frames?: Uint8Array[];
+      };
       if (id === -1) return; // warm-up
       busy[slot] = false;
       if (bytes) onDecoded(bytes);
+      for (const frame of frames ?? []) {
+        if (done) break;
+        onDecoded(frame);
+      }
     };
     w.onerror = () => {
       busy[slot] = false;
@@ -191,9 +216,10 @@ function captureFrame() {
   cameraZoom?.drawFrame(ctx, video, vw, vh);
   const img = ctx.getImageData(0, 0, vw, vh);
   busy[slot] = true;
-  workers[slot]!.postMessage({ id: frameId++, buf: img.data.buffer, w: vw, h: vh }, [
-    img.data.buffer,
-  ]);
+  workers[slot]!.postMessage(
+    { id: frameId++, buf: img.data.buffer, w: vw, h: vh, maxSymbols: scanMaxSymbols },
+    [img.data.buffer],
+  );
 }
 
 function onDecoded(bytes: Uint8Array) {

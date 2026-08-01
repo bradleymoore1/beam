@@ -27,6 +27,7 @@ export default defineConfig({
         send: resolve(__dirname, "send/index.html"),
         receive: resolve(__dirname, "receive/index.html"),
         beacon: resolve(__dirname, "beacon/index.html"),
+        print: resolve(__dirname, "print/index.html"),
       },
     },
   },

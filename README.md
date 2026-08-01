@@ -1,9 +1,11 @@
 # Beam: light-powered file transfer and Trail Beacon
 
 Send a file between two devices using a **screen and a camera**. The fast web
-mode displays an endless stream of high-density monochrome tiles with four
-small QR locators; the compatibility mode uses ordinary animated QR codes.
-Another device points its camera at the screen and reconstructs the file.
+mode can display an endless stream of protected binary or calibrated tricolor
+tiles with four small QR locators; the compatibility mode uses ordinary
+animated QR codes. Beam Paper freezes the same fountain packets into durable,
+scan-any-order printed sheets. Another device points its camera at the carrier
+and reconstructs the file.
 **No network path between the devices, no app, and no pairing.**
 
 The repo also includes companion firmware for the Waveshare ESP32-S3 1.69″
@@ -16,7 +18,7 @@ route.
 
 This is a minimal proof of concept extracted from a larger
 experiment that reached **128 KB/s phone-to-phone**. This version keeps the
-essential trick, removes unreliable color classification, and can transfer
+essential trick, adds protected experimental carriers, and can transfer
 arbitrary files within browser memory and camera-resolution limits.
 
 <p align="center">
@@ -44,6 +46,9 @@ npm run dev
   by hash.
 - For a hardware beacon: open `/beacon/`, scan the display, join the Wi-Fi
   shown, and tap **Open trail library**.
+- For a paper packet: open `/print/`, choose a file up to 250 KB, review the
+  page estimate, and print. On the receiver choose **Printed sheets** before
+  starting the camera; it collects multiple QRs per camera frame in any order.
 
 **Why the dev server is https-only:** the receiver uses `getUserMedia`, and
 browsers remove that API entirely on insecure origins: a phone reaching
@@ -102,9 +107,10 @@ mean dropped frames, which the fountain happily absorbs.
 - **Progress bars must track frames collected, not blocks solved.** LT
   peeling back-loads its solve cascade: block-count progress looks stalled
   for most of the transfer, then teleports to 100%.
-- **QR error correction is set to the minimum (L).** In-frame ECC and the
-  fountain layer solve different problems (corruption vs erasure), but at
-  these frame sizes level L plus frame disposal is the better trade.
+- **QR error correction and fountain redundancy solve different problems.**
+  QR ECC repairs damage inside one frame; fountain packets absorb entirely
+  missing frames. Live defaults to Q for reliability, and paper uses Q because
+  toner defects, folds, and imperfect focus are expected.
 
 ## Tuning
 
@@ -151,6 +157,16 @@ corrected. Protected capacities are 3,865, 8,880, 17,405, and 37,665 bytes per
 frame: about 77 KB/s on the phone profile at 20 FPS before fountain overhead
 and dropped frames. The receiver learns the observed RGB palette from repeated
 calibration patches in each frame instead of assuming ideal display colors.
+
+### Beam Paper
+
+The print route uses 1,465-byte Version 40 QR packets at error-correction level
+Q, arranged 12 per letter-size page as vector artwork. A finite fountain set is
+simulated before rendering so the complete printed set is known to reconstruct
+the original file. The default adds 35% extra packets plus a small fixed margin.
+The receiver's paper profile requests 1920-wide, 30 FPS capture and asks ZXing
+for up to 12 symbols per camera frame. A 12 KB message is about two pages,
+100 KB is about ten pages, and the 250 KB hard limit is about 22 pages.
 
 This deliberately chooses fewer states with much wider signal margins. A
 camera must distinguish each state under autofocus, motion blur, exposure,

@@ -29,7 +29,13 @@ const ctx = self as unknown as {
 let trackedCustom: { size: number; mode: CustomMode; positions: CustomPosition[] } | null = null;
 
 ctx.onmessage = async (e: MessageEvent) => {
-  const { id, buf, w, h } = e.data as { id: number; buf: ArrayBuffer; w: number; h: number };
+  const { id, buf, w, h, maxSymbols } = e.data as {
+    id: number;
+    buf: ArrayBuffer;
+    w: number;
+    h: number;
+    maxSymbols?: number;
+  };
   try {
     const img = new ImageData(new Uint8ClampedArray(buf), w, h);
     // Once a binary field is locked, its four locator positions are stable
@@ -49,7 +55,7 @@ ctx.onmessage = async (e: MessageEvent) => {
     }
     const results = await readBarcodes(img, {
       formats: ["QRCode"],
-      maxNumberOfSymbols: 4,
+      maxNumberOfSymbols: Math.max(1, Math.min(12, maxSymbols ?? 4)),
       returnErrors: true,
     });
     const carriers = results.filter((x) => x.isValid && x.bytes.length > 0);
@@ -78,7 +84,11 @@ ctx.onmessage = async (e: MessageEvent) => {
       ctx.postMessage({ id, bytes });
       return;
     }
-    ctx.postMessage({ id, bytes: carrier?.bytes ?? null });
+    // Copy each result into its own transferable buffer. ZXing may return
+    // views backed by one WASM allocation; transferring that buffer twice
+    // would detach later paper packets before the receiver sees them.
+    const frames = carriers.map((result) => Uint8Array.from(result.bytes));
+    ctx.postMessage({ id, frames }, frames.map((frame) => frame.buffer));
   } catch {
     ctx.postMessage({ id, bytes: null });
   }

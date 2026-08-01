@@ -1,7 +1,7 @@
 {
   "name": "Beam — Transfer files using light",
   "short_name": "Beam",
-  "description": "Transfer any file between devices using light — no internet, no Bluetooth, no pairing",
+  "description": "Transfer files offline using screens, cameras, and durable printed QR packets",
   "theme_color": "#0a0a0f",
   "background_color": "#0a0a0f",
   "display": "standalone",
