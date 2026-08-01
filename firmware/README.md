@@ -10,9 +10,9 @@ always-on offline library:
 - visitors land on a local `/browse` library and download published files;
 - the public `/upload` portal accepts files from anyone connected to the hotspot;
 - each successful upload atomically replaces the previous trail file;
-- after an upload, the display loops Beam-compatible QR video frames so a
-  receiver can scan the file directly from the screen;
-- pressing the physical side button restarts the newest file's broadcast;
+- after an upload, the display shows a standard QR that downloads the latest
+  file over the local Wi-Fi link;
+- pressing the physical side button restores that latest-file QR for 30 seconds;
 - a captive-portal DNS responder makes the library easy to find after joining;
 - files survive normal firmware updates in the filesystem.
 
@@ -48,9 +48,9 @@ pio run -t upload --upload-port /dev/cu.usbmodem21101
 pio device monitor --port /dev/cu.usbmodem21101
 ```
 
-The first boot prints the generated hotspot name and hotspot password. Uploads
-are intentionally PIN-free for public trail use; destructive file deletion is
-not exposed by the public page.
+The first boot prints the generated hotspot name. Uploads are intentionally
+PIN-free for public trail use; destructive file deletion is not exposed by the
+public page.
 
 ## Field workflow
 
@@ -60,13 +60,12 @@ not exposed by the public page.
    open `http://192.168.4.1/upload`.
 4. Upload a compact trail map, PDF, image, GPX file, or other useful local
    guide. No PIN or internet connection is required.
-5. After the upload completes, the display continuously loops the file as
-   Beam-compatible QR video frames. Open the Beam receiver on a phone and
-   point its camera at the display to collect the file.
-6. Press the side button whenever you want to restart broadcasting the latest
-   upload from frame one.
+5. After the upload completes, the display shows a download QR for the latest
+   file. Scan it while connected to the hotspot; the payload then moves over
+   local 802.11n HTTP with resumable byte ranges instead of through the camera.
+6. Press the side button whenever you want to restore the latest-file QR.
 
-The web app includes a companion “Beacon” scanner route so an installed Beam
-app can scan the same Wi-Fi QR and walk a visitor through the join/library
-handoff. The board's `/browse` page is intentionally standalone, so the
-experience still works with a normal phone camera and browser.
+The board's captive upload/library page is intentionally standalone, so the
+experience works with a normal phone camera and browser. Beam's separate
+optical sender remains available for TVs, laptops, tablets, and phones where a
+large, bright screen can carry a dense binary tile stream.

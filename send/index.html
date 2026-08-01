@@ -33,12 +33,10 @@
       <summary>Tuning</summary>
       <div class="row">
         <label>
-          channel
+          transport
           <select id="cfg-mode">
-            <option value="mono" selected>monochrome QR</option>
-            <option value="color">color burst · experimental</option>
-            <option value="custom-safe">RGB tile video · safe</option>
-            <option value="custom">RGB tile video · turbo</option>
+                <option value="binary" selected>binary tiles · fastest on large screens</option>
+            <option value="mono">standard QR · compatible</option>
           </select>
         </label>
         <label>
@@ -46,9 +44,9 @@
           <select id="cfg-fps">
             <option>10</option>
             <option>15</option>
-            <option>20</option>
+            <option selected>20</option>
             <option>24</option>
-            <option selected>30</option>
+            <option>30</option>
             <option>60</option>
           </select>
         </label>
@@ -83,11 +81,11 @@
       </div>
     </details>
 
-    <div class="stage" id="stage" style="display: none;"><canvas id="qr" width="16" height="16" role="img" aria-label="Animated QR transfer frame"></canvas></div>
+    <div class="stage" id="stage" style="display: none;"><canvas id="qr" width="16" height="16" role="img" aria-label="Animated binary optical transfer frame"></canvas></div>
 
     <div class="hint">
-      Max screen brightness helps. The stream loops forever — stop when the
-      receiver says done.
+      Max screen brightness helps. Keep all four corner markers in view. The
+      stream loops forever — stop when the receiver says done.
     </div>
     <script>
         if ("serviceWorker" in navigator && "%MODE%" === "production") {

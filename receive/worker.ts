@@ -6,7 +6,6 @@
 import wasmUrl from "zxing-wasm/reader/zxing_reader.wasm?url";
 import { prepareZXingModule, readBarcodes } from "zxing-wasm/reader";
 import { decodeBeaconFrameText } from "../shared/beacon-frame";
-import { decodeColorImage, isColorCarrier } from "../shared/color-frame";
 import { decodeCustomImage, isCustomLocator } from "../shared/custom-frame";
 
 prepareZXingModule({
@@ -35,12 +34,6 @@ ctx.onmessage = async (e: MessageEvent) => {
     const beaconBytes = carrier ? decodeBeaconFrameText(carrier.text) : null;
     if (beaconBytes) {
       ctx.postMessage({ id, bytes: beaconBytes }, [beaconBytes.buffer]);
-      return;
-    }
-    if (carrier && isColorCarrier(carrier.bytes)) {
-      const version = Number(carrier.version.replace(/\D/g, ""));
-      const bytes = decodeColorImage(img, carrier.position, version);
-      ctx.postMessage({ id, bytes });
       return;
     }
     const customLocators = carriers

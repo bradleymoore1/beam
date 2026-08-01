@@ -9,32 +9,17 @@ import {
   type FrameHeader,
 } from "../shared/protocol";
 import {
-  COLOR_HEADER_LEN,
-  COLOR_VERSION,
-  colorCapacity,
-  colorFor,
-  createColorEnvelope,
-  createColorMatrix,
-  rgba32,
-  symbolAt,
-} from "../shared/color-frame";
-import {
+  CUSTOM_BINARY_SYMBOL_BITS,
   CUSTOM_GRID_SIZE,
   CUSTOM_HEADER_LEN,
-  CUSTOM_RAW_FRAME_BYTES,
-  CUSTOM_SAFE_RAW_FRAME_BYTES,
-  CUSTOM_SAFE_SYMBOL_BITS,
-  CUSTOM_TURBO_SYMBOL_BITS,
   createCustomEnvelope,
   createCustomLayout,
-  customColorFor,
-  customRgba32,
   customSymbolAt,
   customCapacityForBits,
 } from "../shared/custom-frame";
 
 const MARGIN = 4;
-// Keep enough already-rendered frames queued to absorb a slow color/tile
+// Keep enough already-rendered frames queued to absorb a tile
 // encode or a garbage-collection pause without starving the display clock.
 const LOOKAHEAD = 6;
 
@@ -58,8 +43,8 @@ const MAX_FRAME_BYTES_BY_ECC = {
 } as const;
 
 const CUSTOM_LAYOUT = createCustomLayout();
-const COLOR_MATRIX = createColorMatrix(COLOR_VERSION);
-const COLOR_RAW_FRAME_BYTES = colorCapacity(COLOR_MATRIX) - COLOR_HEADER_LEN;
+const CUSTOM_BINARY_RAW_FRAME_BYTES =
+  customCapacityForBits(CUSTOM_LAYOUT, CUSTOM_BINARY_SYMBOL_BITS) - CUSTOM_HEADER_LEN;
 
 type WakeLock = { release: () => Promise<void> };
 let wakeLock: WakeLock | null = null;
@@ -142,15 +127,11 @@ async function handleFile(file: File) {
 
 async function startStream(payload: Uint8Array) {
   const gen = ++generation;
-  const mode = cfgMode.value as "mono" | "color" | "custom-safe" | "custom";
+  const mode = cfgMode.value as "mono" | "binary";
   const txFps = Number(cfgFps.value);
-  const frameBytes = mode === "color"
-    ? COLOR_RAW_FRAME_BYTES
-    : mode === "custom-safe"
-      ? CUSTOM_SAFE_RAW_FRAME_BYTES
-      : mode === "custom"
-        ? CUSTOM_RAW_FRAME_BYTES
-      : Number(cfgBytes.value);
+  const frameBytes = mode === "binary"
+    ? CUSTOM_BINARY_RAW_FRAME_BYTES
+    : Number(cfgBytes.value);
   const ecc = cfgEcc.value as "L" | "M" | "Q" | "H";
   const displayPx = Number(cfgSize.value);
 
@@ -182,9 +163,8 @@ async function startStream(payload: Uint8Array) {
   const queue: ImageData[] = [];
   let nextSeq = 0;
   let pumpScheduled = false;
-  const colorMatrix = mode === "color" ? COLOR_MATRIX : null;
-  const customLayout = mode === "custom-safe" || mode === "custom" ? CUSTOM_LAYOUT : null;
-  const customBits = mode === "custom-safe" ? CUSTOM_SAFE_SYMBOL_BITS : CUSTOM_TURBO_SYMBOL_BITS;
+  const customLayout = mode === "binary" ? CUSTOM_LAYOUT : null;
+  const customBits = CUSTOM_BINARY_SYMBOL_BITS;
 
   const sizeCanvas = () => {
     const dpr = window.devicePixelRatio || 1;
@@ -195,25 +175,11 @@ async function startStream(payload: Uint8Array) {
     staging.height = total;
     canvas.width = total * scale;
     canvas.height = total * scale;
-    // Keep the visible frame size stable when a larger color carrier is
-    // selected. The backing canvas remains integer-scaled for crisp modules,
-    // while CSS presents the same display budget as monochrome mode.
-    canvas.style.width = `${Math.floor(cssBudget)}px`;
-    canvas.style.height = `${Math.floor(cssBudget)}px`;
+    // Integer backing pixels keep every binary cell crisp on Retina displays.
+    const exactCssSize = (total * scale) / dpr;
+    canvas.style.width = `${exactCssSize}px`;
+    canvas.style.height = `${exactCssSize}px`;
   };
-
-  if (colorMatrix) {
-    const capacity = colorCapacity(colorMatrix);
-    if (COLOR_HEADER_LEN + frameBytes > capacity) {
-      throw new Error(`color carrier holds ${capacity - COLOR_HEADER_LEN} raw bytes/frame`);
-    }
-    version = COLOR_VERSION;
-    modules = colorMatrix.size;
-    sizeCanvas();
-    specs.textContent =
-      `${currentFileName} (${Math.round(payload.length / 1024)} KB) · ` +
-      `${txFps} FPS · ${frameBytes} bytes/frame · RGB burst · V${COLOR_VERSION} · K=${encoder.k}`;
-  }
 
   if (customLayout) {
     const capacity = customCapacityForBits(customLayout, customBits);
@@ -224,7 +190,7 @@ async function startStream(payload: Uint8Array) {
     sizeCanvas();
     specs.textContent =
       `${currentFileName} (${Math.round(payload.length / 1024)} KB) · ` +
-      `${txFps} FPS · ${frameBytes} bytes/frame · RGB tile ${customBits === 3 ? "safe" : "turbo"} · ` +
+      `${txFps} FPS · ${frameBytes} bytes/frame · binary tiles · ` +
       `${CUSTOM_GRID_SIZE}×${CUSTOM_GRID_SIZE} · K=${encoder.k}`;
   }
 
@@ -233,7 +199,7 @@ async function startStream(payload: Uint8Array) {
     nextSeq++;
     if (customLayout) {
       const envelope = createCustomEnvelope(bytes, customBits);
-      const colorPadSeed = fnv1a(envelope);
+      const padSeed = fnv1a(envelope);
       const total = CUSTOM_GRID_SIZE + 2 * MARGIN;
       const img = new ImageData(total, total);
       const pixels = new Uint32Array(img.data.buffer);
@@ -251,7 +217,7 @@ async function startStream(payload: Uint8Array) {
           }
           const calibrationIndex = customLayout.calibrationIndex[matrixIndex] ?? 0xff;
           // QR quiet zones and the outer field border must stay white. If
-          // payload colors touch the locator, ZXing loses the finder even
+          // payload cells touch the locator, ZXing loses the finder even
           // though the QR modules themselves are intact.
           if (customLayout.reserved[matrixIndex] && calibrationIndex === 0xff) {
             pixels[destination] = 0xffffffff;
@@ -262,41 +228,10 @@ async function startStream(payload: Uint8Array) {
               envelope,
               customLayout.positionIndex[matrixIndex] ?? 0,
               customBits,
-              colorPadSeed,
+              padSeed,
             )
             : customLayout.calibrationSymbols[calibrationIndex] ?? 0;
-          const [red, green, blue] = customColorFor(symbol);
-          pixels[destination] = customRgba32(red, green, blue);
-        }
-      }
-      return img;
-    }
-    if (colorMatrix) {
-      const envelope = createColorEnvelope(bytes);
-      const colorPadSeed = fnv1a(envelope);
-      const total = colorMatrix.size + 2 * MARGIN;
-      const img = new ImageData(total, total);
-      const pixels = new Uint32Array(img.data.buffer);
-      pixels.fill(0xffffffff);
-      for (let row = 0; row < colorMatrix.size; row++) {
-        for (let column = 0; column < colorMatrix.size; column++) {
-          const matrixIndex = row * colorMatrix.size + column;
-          const destination = (row + MARGIN) * total + column + MARGIN;
-          if (colorMatrix.reserved[matrixIndex]) {
-            pixels[destination] = colorMatrix.data[matrixIndex]
-              ? 0xff000000
-              : 0xffffffff;
-          } else {
-            const calibrationIndex = colorMatrix.calibrationIndex[matrixIndex] ?? 0xff;
-            const symbol = calibrationIndex === 0xff
-              ? symbolAt(envelope, colorMatrix.positionIndex[matrixIndex] ?? 0, colorPadSeed)
-              : colorMatrix.calibrationSymbols[calibrationIndex] ?? 0;
-            const [red, green, blue] = colorFor(
-              colorMatrix.data[matrixIndex] ?? 0,
-              symbol,
-            );
-            pixels[destination] = rgba32(red, green, blue);
-          }
+          pixels[destination] = symbol ? 0xff000000 : 0xffffffff;
         }
       }
       return img;
@@ -385,10 +320,9 @@ async function startStream(payload: Uint8Array) {
 }
 
 function syncTuningOptions() {
-  const color = cfgMode.value === "color";
-  const custom = cfgMode.value === "custom" || cfgMode.value === "custom-safe";
-  cfgBytes.disabled = color || custom;
-  cfgEcc.disabled = color || custom;
+  const binary = cfgMode.value === "binary";
+  cfgBytes.disabled = binary;
+  cfgEcc.disabled = binary;
   const ecc = cfgEcc.value as keyof typeof MAX_FRAME_BYTES_BY_ECC;
   const maxBytes = MAX_FRAME_BYTES_BY_ECC[ecc];
   let frameBytes = Number(cfgBytes.value);
@@ -406,13 +340,9 @@ function syncTuningOptions() {
     const optionEcc = option.value as keyof typeof MAX_FRAME_BYTES_BY_ECC;
     option.disabled = MAX_FRAME_BYTES_BY_ECC[optionEcc] < frameBytes;
   }
-  tuningHint.textContent = color
-    ? `Experimental color burst: V${COLOR_VERSION}, calibrated RGB palette, ${COLOR_RAW_FRAME_BYTES} raw bytes/frame. Keep the phone steady and close. Format is intentionally opt-in.`
-    : custom
-      ? cfgMode.value === "custom-safe"
-        ? `Safe RGB tile video: ${CUSTOM_GRID_SIZE}×${CUSTOM_GRID_SIZE} calibrated 8-color field, ${CUSTOM_SAFE_RAW_FRAME_BYTES} raw bytes/frame. The small QR is only a locator; keep the phone close and steady.`
-        : `Turbo RGB tile video: ${CUSTOM_GRID_SIZE}×${CUSTOM_GRID_SIZE} calibrated 16-color field, ${CUSTOM_RAW_FRAME_BYTES} raw bytes/frame. The small QR is only a locator; keep the phone close and steady.`
-    : `For ECC ${ecc}, the maximum reliable payload profile here is ${maxBytes} bytes/frame.`;
+  tuningHint.textContent = binary
+    ? `High-throughput binary field: ${CUSTOM_GRID_SIZE}×${CUSTOM_GRID_SIZE}, ${CUSTOM_BINARY_RAW_FRAME_BYTES} raw bytes/frame. Four small QR codes are locators only. Use a large, bright screen and the Beam receiver.`
+    : `Standard monochrome QR compatibility mode. For ECC ${ecc}, the maximum profile is ${maxBytes} bytes/frame.`;
 }
 
 function showStreamError(err: unknown) {

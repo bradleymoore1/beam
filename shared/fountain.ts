@@ -125,6 +125,19 @@ export class LTEncoder {
     this.words = Math.ceil(blockLen / 4);
     this.blocks = new Uint32Array(this.k * this.words);
     const bytes = new Uint8Array(this.blocks.buffer);
+    // Whiten unused bytes in the final source block. The decoder truncates
+    // back to totalLen, so this does not alter the file; it prevents a small
+    // file or final block from turning most of a dense optical frame white.
+    const padding = splitmix32(
+      (Math.imul(sessionId + 1, 0x9e3779b1) ^ payload.length ^ blockLen) | 0,
+    );
+    for (let offset = 0; offset < bytes.length; offset += 4) {
+      const value = padding();
+      bytes[offset] = value;
+      if (offset + 1 < bytes.length) bytes[offset + 1] = value >>> 8;
+      if (offset + 2 < bytes.length) bytes[offset + 2] = value >>> 16;
+      if (offset + 3 < bytes.length) bytes[offset + 3] = value >>> 24;
+    }
     for (let b = 0; b < this.k; b++) {
       const src = payload.subarray(b * blockLen, Math.min((b + 1) * blockLen, payload.length));
       bytes.set(src, b * this.words * 4);

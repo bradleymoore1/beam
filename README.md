@@ -1,10 +1,10 @@
 # Beam: light-powered file transfer and Trail Beacon
 
-Send a file between two devices using nothing but a **screen and a camera**.
-One page displays the file as an endless stream of animated QR codes; another
-device points its camera at it and reconstructs the file. **No network path
-between the devices, no app, no pairing, no permissions beyond the camera.**
-The payload travels as light.
+Send a file between two devices using a **screen and a camera**. The fast web
+mode displays an endless stream of high-density monochrome tiles with four
+small QR locators; the compatibility mode uses ordinary animated QR codes.
+Another device points its camera at the screen and reconstructs the file.
+**No network path between the devices, no app, and no pairing.**
 
 The repo also includes companion firmware for the Waveshare ESP32-S3 1.69″
 touch display. Flashing the separate `firmware/` project turns that board into
@@ -15,10 +15,9 @@ works even without Beam, and the app has a dedicated `Scan a Trail Beacon`
 route.
 
 This is a minimal proof of concept extracted from a larger
-experiment that reached **128 KB/s phone-to-phone** with denser frames,
-multi-code grids, and an error-corrected color channel. This version keeps
-the essential trick and can transfer arbitrary files within the selected
-QR profile and browser memory limits.
+experiment that reached **128 KB/s phone-to-phone**. This version keeps the
+essential trick, removes unreliable color classification, and can transfer
+arbitrary files within browser memory and camera-resolution limits.
 
 <p align="center">
   <img src="docs/receiving.jpg" width="420"
@@ -118,54 +117,30 @@ the camera starts.
 
 | setting | default | notes |
 |---|---|---|
-| channel | monochrome QR | **RGB tile safe/turbo** modes use small QR locators plus a calibrated color field |
-| tx fps | 30 | each frame owns at least 2 refresh cycles on a 60 Hz display |
-| bytes / frame | 1465 (QR v27) | denser is faster if the receiver still decodes it; 2833 total frame bytes (V40/L) works phone-to-phone at close range |
+| channel | binary tiles | fastest on a TV, laptop, tablet, or large phone; standard QR is the compatibility fallback |
+| tx fps | 20 | avoids display/camera refresh aliasing; increase only when the receiver proves it can decode every exposure |
+| bytes / frame | automatic | binary mode fills the fixed 176×176 field; QR mode exposes conservative payload profiles |
 
 The parent experiment's measured ceiling with this exact architecture plus
 denser frames, a 120 fps ProMotion sender, and stacked codes: ~128 KB/s
 handheld, ~186 KB/s propped.
 
-### Experimental color burst
+### Binary tile video
 
-The sender's **color burst** mode keeps a real V40 QR carrier underneath, so
-the existing ZXing detector still finds and locks onto the frame. Each payload
-module uses one of eight light colors or eight dark colors: three extra bits
-per module. That is 16 physical states, not an exponential throughput gain—
-the state count grows exponentially with bits, while payload grows linearly
-with bits. Thirty-two calibration modules are fixed inside the carrier and
-sampled by the receiver first, which compensates for the camera's white
-balance and exposure. The integrity hash then rejects any frame whose color
-symbols were misread, while the fountain stream supplies the missing frame
-recovery.
+The fast mode removes the full-frame QR carrier. Four small Version 1 QR
+symbols remain at the corners only to give ZXing reliable frame geometry. The
+rest of the 176×176 field carries one hard black/white bit per tile, including
+repeated calibration cells. The receiver perspective-corrects the field from
+the four locators and derives its luminance threshold from the captured frame.
 
-The unused tail of the color field is filled with seeded palette symbols so
-the whole data area stays chromatic instead of falling back to neutral black
-and white. QR structural modules such as finder, timing, and alignment
-patterns remain monochrome so the detector keeps the same geometry.
-
-The QR-compatible profile sends **11,096 raw frame bytes** at a time (10,976
-file bytes after the fixed frame header). That is about **7.6× the default
-1,465-byte profile** or **3.9× the V40 monochrome profile** before camera
-losses and fountain overhead. It is intentionally opt-in: use a bright,
-steady display and keep the receiver close. The monochrome path remains the
-compatibility and long-distance fallback.
-
-### RGB tile video
-
-The **RGB tile safe/turbo** modes remove the full-frame QR carrier. Four small
-V3 QR symbols remain at the corners only to give ZXing the frame geometry;
-the rest of the 176×176 field is calibrated RGB data. The safe profile uses
-eight colors (3 bits/tile); turbo uses sixteen colors (4 bits/tile). The
-receiver auto-detects the profile and reconstructs the screen with the four
-locators, so moderate camera rotation and perspective do not require a fixed
-phone angle.
-
-The current turbo profile carries **12,028 raw frame bytes** (11,908 file
-bytes) at 30 FPS in the ideal path; safe carries **9,018 raw bytes** (8,898
-file bytes) with a wider color margin. These are optical-channel ceilings, not promises of wired
-Ethernet speed: camera exposure, focus, display refresh, QR locator misses,
-and fountain overhead determine real goodput.
+This deliberately chooses fewer states with much wider signal margins. A
+camera must distinguish each state under autofocus, motion blur, exposure,
+white balance, display PWM, compression, glare, and perspective. RGB adds
+nominal bits but sharply increases frame rejection on real phones. The binary
+field instead spends the camera's spatial resolution on more independent
+tiles and lets the fountain layer turn undecodable frames into harmless
+erasures. Use a bright large screen, keep the whole square in view, and let
+the receiver's zoom control fill the camera frame.
 
 ## Trail Beacon hardware
 
@@ -176,16 +151,14 @@ cd firmware
 pio run
 ```
 
-The board first shows a Wi-Fi join QR, then switches to an upload-page QR after
-it detects a connected phone. The public upload page at
-`http://192.168.4.1/upload` accepts a file from anyone connected to the hotspot,
-with no PIN or internet required; after upload, the board continuously displays
-Beam-compatible QR video frames for phone-camera recovery. It also keeps the local
-`http://192.168.4.1/browse` library, storing up to eight files (8 MB each) in
-internal flash. See [`firmware/README.md`](firmware/README.md) for the
-deliberate flash step and field workflow. Flashing replaces the app on the
-physical board; the prior display firmware remains intact in its separate
-checkout at `/Users/bradleym.moore/Downloads/baby-girl-display`.
+The board first shows a Wi-Fi join QR. Its captive page accepts a file from
+anyone connected to the hotspot, with no PIN or internet required. After an
+upload the display shows a standard latest-file QR and transfers the payload
+over local 802.11n HTTP with resumable byte ranges. This is dramatically faster
+and more reliable than trying to resolve thousands of optical modules on a
+240×280 display. It keeps one latest file up to 8 MB in internal flash. See
+[`firmware/README.md`](firmware/README.md) for the deliberate flash step and
+field workflow.
 
 ## Similar projects
 

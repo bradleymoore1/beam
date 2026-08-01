@@ -3,7 +3,7 @@
   "private": true,
   "version": "1.0.0",
   "license": "MIT",
-  "description": "Transfer files between devices using nothing but light — fountain-coded animated QR codes, screen to camera, no network.",
+  "description": "Transfer files over a fountain-coded binary optical channel, screen to camera, with no network.",
   "type": "module",
   "scripts": {
     "dev": "vite",

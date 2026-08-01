@@ -1,29 +1,24 @@
 import QRCode from "qrcode";
 import { fnv1a } from "./protocol";
 
-// The tile mode is deliberately not a QR code. A small QR symbol remains only
-// as a locator/fiducial; the rest of the screen is a calibrated RGB tile field.
-// That lets the receiver keep ZXing's excellent geometry detection while
-// reclaiming most of QR's finder/ECC/data-format overhead.
-export const CUSTOM_LOCATOR_TEXT = "BEAM-TILE-1";
+// The tile mode is deliberately not a QR code. Four tiny standard QR symbols
+// are locators only; the rest is a raw black/white field. Binary survives
+// camera demosaicing, white balance, compression, and imperfect focus much
+// better than the retired RGB carrier while reclaiming QR's format overhead.
+export const CUSTOM_LOCATOR_TEXT = "BMB1";
 export const CUSTOM_GRID_SIZE = 176;
 export const CUSTOM_OUTER_MARGIN = 4;
-export const CUSTOM_SAFE_SYMBOL_BITS = 3;
-export const CUSTOM_TURBO_SYMBOL_BITS = 4;
-export const CUSTOM_SYMBOL_COUNT = 1 << CUSTOM_TURBO_SYMBOL_BITS;
+export const CUSTOM_BINARY_SYMBOL_BITS = 1;
+export const CUSTOM_SYMBOL_COUNT = 2;
 export const CUSTOM_HEADER_LEN = 10;
-export const CUSTOM_LOCATOR_VERSION = 3;
-export const CUSTOM_LOCATOR_SIZE = 29;
+export const CUSTOM_LOCATOR_VERSION = 1;
+export const CUSTOM_LOCATOR_SIZE = 21;
 export const CUSTOM_LOCATOR_QUIET = 4;
 export const CUSTOM_LOCATOR_TOTAL = CUSTOM_LOCATOR_SIZE + CUSTOM_LOCATOR_QUIET * 2;
 export const CUSTOM_LOCATOR_INSET = 6;
 export const CUSTOM_CALIBRATION_X = Math.floor(CUSTOM_GRID_SIZE / 2) - CUSTOM_SYMBOL_COUNT / 2;
 export const CUSTOM_CALIBRATION_Y = Math.floor(CUSTOM_GRID_SIZE / 2);
-export const CUSTOM_CALIBRATION_COPIES = 2;
-// The field is fully painted even when the envelope is shorter, so using the
-// exact byte capacity costs no extra pixels and maximizes fountain block size.
-export const CUSTOM_SAFE_RAW_FRAME_BYTES = 9_018;
-export const CUSTOM_RAW_FRAME_BYTES = 12_028;
+export const CUSTOM_CALIBRATION_COPIES = 4;
 
 const MAGIC0 = 0xb3;
 const MAGIC1 = 0x54;
@@ -70,28 +65,6 @@ export type CustomLocator = {
   centerX: number;
   centerY: number;
 };
-
-// These colors are intentionally separated in RGB space and include both
-// bright and dark swatches. Calibration cells are sampled on every frame, so
-// white balance and display/camera color shifts do not need a fixed profile.
-export const CUSTOM_PALETTE: readonly (readonly [number, number, number])[] = [
-  [246, 246, 240],
-  [255, 160, 160],
-  [255, 230, 128],
-  [175, 245, 175],
-  [145, 230, 235],
-  [160, 190, 255],
-  [210, 160, 245],
-  [245, 155, 220],
-  [18, 20, 25],
-  [130, 35, 50],
-  [130, 85, 25],
-  [25, 115, 65],
-  [20, 105, 110],
-  [35, 55, 145],
-  [85, 35, 120],
-  [130, 35, 100],
-];
 
 let cachedLayout: CustomLayout | null = null;
 
@@ -222,7 +195,7 @@ export function createCustomLayout(): CustomLayout {
 }
 
 export function customCapacity(layout = createCustomLayout()): number {
-  return customCapacityForBits(layout, CUSTOM_TURBO_SYMBOL_BITS);
+  return customCapacityForBits(layout, CUSTOM_BINARY_SYMBOL_BITS);
 }
 
 export function customCapacityForBits(
@@ -230,14 +203,6 @@ export function customCapacityForBits(
   symbolBits: number,
 ): number {
   return Math.floor((layout.dataPositions.length * symbolBits) / 8);
-}
-
-export function customColorFor(symbol: number): readonly [number, number, number] {
-  return CUSTOM_PALETTE[symbol & (CUSTOM_SYMBOL_COUNT - 1)]!;
-}
-
-export function customRgba32(red: number, green: number, blue: number): number {
-  return (0xff000000 | (blue << 16) | (green << 8) | red) >>> 0;
 }
 
 function fillerSymbol(symbolIndex: number, seed: number, symbolBits: number): number {
@@ -251,7 +216,7 @@ function fillerSymbol(symbolIndex: number, seed: number, symbolBits: number): nu
 export function customSymbolAt(
   bytes: Uint8Array,
   symbolIndex: number,
-  symbolBits = CUSTOM_TURBO_SYMBOL_BITS,
+  symbolBits = CUSTOM_BINARY_SYMBOL_BITS,
   padSeed = 0,
 ): number {
   const bitOffset = symbolIndex * symbolBits;
@@ -270,11 +235,9 @@ export function customSymbolAt(
 
 export function createCustomEnvelope(
   raw: Uint8Array,
-  symbolBits = CUSTOM_TURBO_SYMBOL_BITS,
+  symbolBits = CUSTOM_BINARY_SYMBOL_BITS,
 ): Uint8Array {
-  if (symbolBits !== CUSTOM_SAFE_SYMBOL_BITS && symbolBits !== CUSTOM_TURBO_SYMBOL_BITS) {
-    throw new Error("unsupported custom symbol depth");
-  }
+  if (symbolBits !== CUSTOM_BINARY_SYMBOL_BITS) throw new Error("unsupported custom symbol depth");
   if (raw.length > 0xffff) throw new Error("custom frame is too large");
   const out = new Uint8Array(CUSTOM_HEADER_LEN + raw.length);
   const view = new DataView(out.buffer);
@@ -297,8 +260,7 @@ function parseCustomHeader(
     view.getUint8(0) !== MAGIC0 ||
     view.getUint8(1) !== MAGIC1 ||
     view.getUint8(2) !== PROTOCOL_VERSION ||
-    (view.getUint8(3) !== CUSTOM_SAFE_SYMBOL_BITS &&
-      view.getUint8(3) !== CUSTOM_TURBO_SYMBOL_BITS)
+    view.getUint8(3) !== CUSTOM_BINARY_SYMBOL_BITS
   ) return null;
   return {
     rawLen: view.getUint16(4, true),
@@ -451,14 +413,8 @@ function sampleRgb(
   return [red / count, green / count, blue / count];
 }
 
-function colorDistance(
-  a: readonly [number, number, number],
-  b: readonly [number, number, number],
-): number {
-  const red = a[0] - b[0];
-  const green = a[1] - b[1];
-  const blue = a[2] - b[2];
-  return red * red + green * green + blue * blue;
+function luminance(sample: readonly [number, number, number]): number {
+  return 0.2126 * sample[0] + 0.7152 * sample[1] + 0.0722 * sample[2];
 }
 
 export function decodeCustomImage(
@@ -468,10 +424,7 @@ export function decodeCustomImage(
 ): Uint8Array | null {
   const mapper = createGridMapper(positions, layout);
   if (!mapper) return null;
-  const palette: [number, number, number][] = Array.from(
-    { length: CUSTOM_SYMBOL_COUNT },
-    () => [0, 0, 0] as [number, number, number],
-  );
+  const levels = new Float32Array(CUSTOM_SYMBOL_COUNT);
   const paletteCounts = new Uint8Array(CUSTOM_SYMBOL_COUNT);
   for (let index = 0; index < layout.calibrationPositions.length; index++) {
     const symbol = layout.calibrationSymbols[index]!;
@@ -481,19 +434,18 @@ export function decodeCustomImage(
       layout.calibrationRows[index]!,
       layout.calibrationColumns[index]!,
     );
-    palette[symbol]![0] += sample[0];
-    palette[symbol]![1] += sample[1];
-    palette[symbol]![2] += sample[2];
+    levels[symbol] += luminance(sample);
     paletteCounts[symbol] = (paletteCounts[symbol] ?? 0) + 1;
   }
   for (let index = 0; index < CUSTOM_SYMBOL_COUNT; index++) {
     const count = paletteCounts[index] || 1;
-    palette[index]![0] /= count;
-    palette[index]![1] /= count;
-    palette[index]![2] /= count;
+    levels[index] /= count;
   }
-
-  const observed = new Float32Array(layout.dataPositions.length * 3);
+  // Symbol 0 is white and symbol 1 is black. Reject badly blurred/exposed
+  // frames before they can poison the fountain decoder.
+  if (levels[0]! - levels[1]! < 36) return null;
+  const threshold = (levels[0]! + levels[1]!) / 2;
+  const symbols = new Uint8Array(layout.dataPositions.length);
   for (let index = 0; index < layout.dataPositions.length; index++) {
     const sample = sampleRgb(
       image,
@@ -501,40 +453,7 @@ export function decodeCustomImage(
       layout.dataRows[index]!,
       layout.dataColumns[index]!,
     );
-    observed[index * 3] = sample[0];
-    observed[index * 3 + 1] = sample[1];
-    observed[index * 3 + 2] = sample[2];
+    symbols[index] = luminance(sample) < threshold ? 1 : 0;
   }
-
-  const classify = (paletteSize: number): Uint8Array => {
-    const symbols = new Uint8Array(layout.dataPositions.length);
-    for (let index = 0; index < layout.dataPositions.length; index++) {
-      const color: [number, number, number] = [
-        observed[index * 3]!,
-        observed[index * 3 + 1]!,
-        observed[index * 3 + 2]!,
-      ];
-      let closest = 0;
-      let closestDistance = Number.POSITIVE_INFINITY;
-      for (let symbol = 0; symbol < paletteSize; symbol++) {
-        const distance = colorDistance(color, palette[symbol]!);
-        if (distance < closestDistance) {
-          closest = symbol;
-          closestDistance = distance;
-        }
-      }
-      symbols[index] = closest;
-    }
-    return symbols;
-  };
-
-  const turbo = decodeCustomEnvelope(
-    classify(CUSTOM_SYMBOL_COUNT),
-    CUSTOM_TURBO_SYMBOL_BITS,
-  );
-  if (turbo) return turbo;
-  return decodeCustomEnvelope(
-    classify(1 << CUSTOM_SAFE_SYMBOL_BITS),
-    CUSTOM_SAFE_SYMBOL_BITS,
-  );
+  return decodeCustomEnvelope(symbols, CUSTOM_BINARY_SYMBOL_BITS);
 }

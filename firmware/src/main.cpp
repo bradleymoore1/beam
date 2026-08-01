@@ -5,9 +5,9 @@
 #include <Preferences.h>
 #include <WebServer.h>
 #include <WiFi.h>
+#include <esp_wifi.h>
 #include <esp_system.h>
 #include <qrcode.h>
-#include <vector>
 
 // Trail Beacon is intentionally a sibling firmware project. Flashing it
 // replaces the app on the board, but does not touch the existing baby-girl-
@@ -29,11 +29,6 @@ constexpr uint16_t MINT = 0xA7F5;
 constexpr uint16_t GOLD = 0xFDCB;
 constexpr uint16_t CORAL = 0xFB4E;
 constexpr uint16_t MUTED = 0x9B3B;
-// Four bright and four dark states. Every state stays on the correct side of
-// the QR luminance threshold, so the standard decoder remains a reliable
-// fallback while playback visibly exercises the display's chroma channel.
-constexpr uint16_t LIGHT_RGB[4] = {0xF79E, 0xFEDB, 0xDFFB, 0xDF3F};
-constexpr uint16_t DARK_RGB[4] = {0x1083, 0x4003, 0x0204, 0x10AA};
 }  // namespace Color
 
 constexpr size_t MAX_FILES = 8;
@@ -43,14 +38,6 @@ constexpr char MANIFEST_PATH[] = "/manifest.tsv";
 constexpr char MANIFEST_TEMP_PATH[] = "/manifest.new";
 constexpr char MANIFEST_BACKUP_PATH[] = "/manifest.bak";
 constexpr char TEMP_PATH[] = "/upload.tmp";
-constexpr char PLAYBACK_PREFIX[] = "BEAM-FRAME-1:";
-constexpr size_t FRAME_HEADER_LEN = 120;
-// Keep the QR modules large enough for a phone camera on the 240px display.
-// The base64 wrapper makes this smaller than the browser's monochrome frame.
-constexpr size_t PLAYBACK_BLOCK_LEN = 700;
-constexpr size_t PLAYBACK_BINARY_LEN = FRAME_HEADER_LEN + PLAYBACK_BLOCK_LEN;
-constexpr size_t PLAYBACK_BASE64_LEN = ((PLAYBACK_BINARY_LEN + 2) / 3) * 4;
-constexpr uint32_t PLAYBACK_INTERVAL_MS = 280;
 
 Arduino_DataBus *displayBus =
     new Arduino_ESP32SPI(Board::LCD_DC, Board::LCD_CS, Board::LCD_CLK,
@@ -88,31 +75,10 @@ String uploadError;
 
 bool screenDirty = true;
 bool stationWasPresent = false;
+bool latestScreenOverride = false;
+uint32_t latestScreenUntil = 0;
 
-fs::File playbackFile;
-String playbackName;
-uint32_t playbackFileId = 0;
-uint32_t playbackSize = 0;
-uint32_t playbackFnv = 0;
-uint32_t playbackK = 1;
-uint16_t playbackSessionId = 0;
-uint32_t playbackSeq = 0;
-uint32_t playbackNextAt = 0;
-bool playbackActive = false;
-std::vector<uint32_t> playbackIndices;
-std::vector<uint32_t> playbackScratch;
-double playbackDistributionTotal = 1.0;
-double playbackR = 1.0;
-uint32_t playbackSpike = 1;
-uint32_t pendingPlaybackId = 0;
-uint8_t playbackSource[PLAYBACK_BLOCK_LEN] = {};
-uint8_t playbackBlock[PLAYBACK_BLOCK_LEN] = {};
-uint8_t playbackFrame[PLAYBACK_BINARY_LEN] = {};
-char playbackQrPayload[sizeof(PLAYBACK_PREFIX) - 1 + PLAYBACK_BASE64_LEN + 1] = {};
-int lastQrTotal = 0;
-
-void startPlayback(uint32_t id);
-void stopPlayback();
+uint8_t downloadBuffer[16 * 1024] = {};
 
 struct TouchState {
   bool active = false;
@@ -139,7 +105,7 @@ const char UPLOAD_HTML[] PROGMEM = R"HTML(<!doctype html>
 </style></head><body><main>
 <div class="eyebrow">Trail Beacon · public upload</div><div class="hero"><div><h1>Pack the trail.</h1><p>Share a map, guide, or any useful file with people nearby.</p></div><div class="eyebrow">LOCAL ONLY</div></div>
 <section class="panel"><h2>Beacon details</h2><p>Anyone connected to this Wi‑Fi can publish a file. There is no internet account or PIN.</p><div class="facts"><div class="fact"><b id="ssid">—</b><span>Wi‑Fi network</span></div><div class="fact"><b id="ip">192.168.4.1</b><span>library address</span></div><div class="fact"><b id="capacity">—</b><span>local storage</span></div></div></section>
-<section class="panel"><h2>Publish the latest file</h2><p>A successful upload safely replaces the previous file, then starts its QR broadcast. The side button rebroadcasts it at any time.</p><form id="upload"><label class="drop">Choose a PDF, map, image, or any useful file<input id="file" type="file" required></label><button id="uploadButton" type="submit">Publish &amp; start QR broadcast</button></form><div id="uploadStatus" class="status"></div></section>
+<section class="panel"><h2>Publish the latest file</h2><p>A successful upload safely replaces the previous file. Visitors download it directly over this local Wi‑Fi—the fastest and most reliable path.</p><form id="upload"><label class="drop">Choose a PDF, map, image, or any useful file<input id="file" type="file" required></label><button id="uploadButton" type="submit">Publish latest file</button></form><div id="uploadStatus" class="status"></div></section>
 <section class="panel"><div class="row" style="justify-content:space-between"><h2>Current trail file</h2><a class="button secondary" href="/browse">Open download page</a></div><div id="files"><p>Loading…</p></div></section>
 <div class="foot">Files are stored on this beacon. Downloads work directly over its Wi‑Fi, even with no internet service.</div>
 </main><script>
@@ -147,7 +113,7 @@ const $=id=>document.getElementById(id);function fmt(n){if(n<1024)return n+' B';
 async function manifest(){const r=await fetch('/api/manifest',{cache:'no-store'});if(!r.ok)throw Error('Could not read the beacon');return r.json()}
 function render(d){$('ssid').textContent=d.ssid;$('capacity').textContent=fmt(d.storage.total-d.storage.used)+' free';$('ip').textContent=d.host;$('files').innerHTML=d.files.length?d.files.map(f=>`<div class="file"><div><strong>${escapeHtml(f.name)}</strong><small>${fmt(f.size)} · ${f.mime}</small></div><a class="button secondary" href="/download?id=${f.id}">Download</a></div>`).join(''):'<p>No files yet. Add the first trail guide.</p>'}
 async function refresh(){try{render(await manifest())}catch(e){$('files').innerHTML='<p>'+e.message+'</p>'}}
-$('upload').onsubmit=async e=>{e.preventDefault();const f=$('file').files[0];if(!f)return;$('uploadButton').disabled=true;$('uploadStatus').textContent='Publishing '+f.name+'…';const body=new FormData();body.append('file',f);try{const r=await fetch('/api/upload',{method:'POST',body});let d={};try{d=await r.json()}catch{}if(!r.ok)throw Error(d.error||('HTTP '+r.status));$('uploadStatus').textContent='Published ✓ QR broadcast started.';$('file').value='';await refresh()}catch(err){$('uploadStatus').textContent=err.message}finally{$('uploadButton').disabled=false}};refresh();
+$('upload').onsubmit=async e=>{e.preventDefault();const f=$('file').files[0];if(!f)return;$('uploadButton').disabled=true;$('uploadStatus').textContent='Publishing '+f.name+'…';const body=new FormData();body.append('file',f);try{const r=await fetch('/api/upload',{method:'POST',body});let d={};try{d=await r.json()}catch{}if(!r.ok)throw Error(d.error||('HTTP '+r.status));$('uploadStatus').textContent='Published ✓ Ready for fast local download.';$('file').value='';await refresh()}catch(err){$('uploadStatus').textContent=err.message}finally{$('uploadButton').disabled=false}};refresh();
 </script></body></html>)HTML";
 
 const char BROWSE_HTML[] PROGMEM = R"HTML(<!doctype html>
@@ -318,257 +284,6 @@ String manifestJson() {
   return body;
 }
 
-double deterministicLog(double value) {
-  int exponent = 0;
-  double mantissa = value;
-  while (mantissa >= 1.5) {
-    mantissa /= 2.0;
-    ++exponent;
-  }
-  while (mantissa < 0.75) {
-    mantissa *= 2.0;
-    --exponent;
-  }
-  const double z = (mantissa - 1.0) / (mantissa + 1.0);
-  const double z2 = z * z;
-  double term = z;
-  double sum = 0.0;
-  for (int n = 1; n <= 21; n += 2) {
-    sum += term / static_cast<double>(n);
-    term *= z2;
-  }
-  return static_cast<double>(exponent) * 0.6931471805599453 + 2.0 * sum;
-}
-
-double playbackDegreeWeight(uint32_t degree) {
-  const double rho = degree == 1
-    ? 1.0 / static_cast<double>(playbackK)
-    : 1.0 / (static_cast<double>(degree) * static_cast<double>(degree - 1));
-  double tau = 0.0;
-  if (degree < playbackSpike) {
-    tau = playbackR / (static_cast<double>(degree) * static_cast<double>(playbackK));
-  } else if (degree == playbackSpike) {
-    tau = (playbackR * max(0.0, deterministicLog(playbackR / 0.5))) /
-      static_cast<double>(playbackK);
-  }
-  return rho + tau;
-}
-
-bool buildPlaybackDistribution() {
-  if (playbackK == 1) {
-    playbackR = 1.0;
-    playbackSpike = 1;
-    playbackDistributionTotal = 1.0;
-    return true;
-  }
-  constexpr double solitonC = 0.1;
-  constexpr double solitonDelta = 0.5;
-  const double root = sqrt(static_cast<double>(playbackK));
-  playbackR = max(1.0, solitonC * deterministicLog(
-      static_cast<double>(playbackK) / solitonDelta) * root);
-  playbackSpike = min(
-      playbackK, static_cast<uint32_t>(ceil(static_cast<double>(playbackK) / playbackR)));
-  double total = 0.0;
-  for (uint32_t degree = 1; degree <= playbackK; ++degree)
-    total += playbackDegreeWeight(degree);
-  if (total <= 0.0) return false;
-  playbackDistributionTotal = total;
-  return true;
-}
-
-struct PlaybackRng {
-  uint32_t state;
-
-  uint32_t next() {
-    state += 0x9e3779b9u;
-    uint32_t value = state ^ (state >> 16);
-    value = static_cast<uint32_t>(value * 0x21f0aaadu);
-    value ^= value >> 15;
-    value = static_cast<uint32_t>(value * 0x735a2d97u);
-    value ^= value >> 15;
-    return value;
-  }
-};
-
-uint32_t playbackFrameSeed(uint16_t sessionId, uint32_t sequence) {
-  uint32_t hash = (static_cast<uint32_t>(sessionId + 1) * 0x9e3779b1u) ^
-    (sequence + 0x85ebca6bu);
-  hash = static_cast<uint32_t>((hash ^ (hash >> 13)) * 0xc2b2ae35u);
-  return hash ^ (hash >> 16);
-}
-
-bool choosePlaybackIndices(uint32_t sequence) {
-  playbackIndices.clear();
-  if (!playbackK) return false;
-  PlaybackRng rng{playbackFrameSeed(playbackSessionId, sequence)};
-  const double unit = static_cast<double>(rng.next()) * 2.3283064365386963e-10;
-  double cumulative = 0.0;
-  uint32_t degree = playbackK;
-  for (uint32_t candidate = 1; candidate <= playbackK; ++candidate) {
-    cumulative += playbackDegreeWeight(candidate);
-    if (candidate == playbackK || cumulative / playbackDistributionTotal >= unit) {
-      degree = candidate;
-      break;
-    }
-  }
-  if (degree > (playbackK >> 3)) {
-    const size_t scratchBytes = static_cast<size_t>(playbackK) * sizeof(uint32_t);
-    if (ESP.getMaxAllocHeap() < scratchBytes + 8192) {
-      Serial.printf("Skipping high-degree frame %u (degree=%u, heap=%u)\n",
-                    static_cast<unsigned>(sequence), static_cast<unsigned>(degree),
-                    static_cast<unsigned>(ESP.getFreeHeap()));
-      return false;
-    }
-    playbackScratch.resize(playbackK);
-    for (uint32_t i = 0; i < playbackK; ++i) playbackScratch[i] = i;
-    playbackIndices.reserve(degree);
-    for (uint32_t i = 0; i < degree; ++i) {
-      const uint32_t j = i + (rng.next() % (playbackK - i));
-      const uint32_t temp = playbackScratch[i];
-      playbackScratch[i] = playbackScratch[j];
-      playbackScratch[j] = temp;
-      playbackIndices.push_back(playbackScratch[i]);
-    }
-    return true;
-  }
-  playbackIndices.reserve(degree);
-  while (playbackIndices.size() < degree) {
-    const uint32_t candidate = rng.next() % playbackK;
-    bool duplicate = false;
-    for (uint32_t chosen : playbackIndices) {
-      if (chosen == candidate) {
-        duplicate = true;
-        break;
-      }
-    }
-    if (!duplicate) playbackIndices.push_back(candidate);
-  }
-  return true;
-}
-
-uint32_t fileFnv(fs::File &file) {
-  uint32_t hash = 0x811c9dc5u;
-  file.seek(0);
-  while (file.available()) {
-    const size_t count = file.read(playbackSource, PLAYBACK_BLOCK_LEN);
-    for (size_t i = 0; i < count; ++i) {
-      hash ^= playbackSource[i];
-      hash = static_cast<uint32_t>(hash * 0x01000193u);
-    }
-    delay(0);
-  }
-  file.seek(0);
-  return hash;
-}
-
-void writeU16(uint8_t *target, uint16_t value) {
-  target[0] = static_cast<uint8_t>(value);
-  target[1] = static_cast<uint8_t>(value >> 8);
-}
-
-void writeU32(uint8_t *target, uint32_t value) {
-  target[0] = static_cast<uint8_t>(value);
-  target[1] = static_cast<uint8_t>(value >> 8);
-  target[2] = static_cast<uint8_t>(value >> 16);
-  target[3] = static_cast<uint8_t>(value >> 24);
-}
-
-size_t base64Encode(const uint8_t *source, size_t length, char *target, size_t capacity) {
-  static constexpr char alphabet[] =
-      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-  size_t output = 0;
-  for (size_t offset = 0; offset < length; offset += 3) {
-    const size_t remaining = length - offset;
-    const uint32_t value = (static_cast<uint32_t>(source[offset]) << 16) |
-      ((remaining > 1 ? source[offset + 1] : 0) << 8) |
-      (remaining > 2 ? source[offset + 2] : 0);
-    if (output + 4 >= capacity) return 0;
-    target[output++] = alphabet[(value >> 18) & 0x3f];
-    target[output++] = alphabet[(value >> 12) & 0x3f];
-    target[output++] = remaining > 1 ? alphabet[(value >> 6) & 0x3f] : '=';
-    target[output++] = remaining > 2 ? alphabet[value & 0x3f] : '=';
-  }
-  target[output] = '\0';
-  return output;
-}
-
-bool encodePlaybackFrame() {
-  if (!playbackActive || !playbackFile) return false;
-  if (!choosePlaybackIndices(playbackSeq)) return false;
-  memset(playbackBlock, 0, sizeof(playbackBlock));
-  for (uint32_t blockIndex : playbackIndices) {
-    memset(playbackSource, 0, sizeof(playbackSource));
-    playbackFile.seek(static_cast<uint32_t>(blockIndex * PLAYBACK_BLOCK_LEN));
-    const size_t count = playbackFile.read(playbackSource, PLAYBACK_BLOCK_LEN);
-    if (count == 0 && blockIndex * PLAYBACK_BLOCK_LEN < playbackSize) return false;
-    for (size_t i = 0; i < PLAYBACK_BLOCK_LEN; ++i)
-      playbackBlock[i] ^= playbackSource[i];
-  }
-
-  memset(playbackFrame, 0, sizeof(playbackFrame));
-  playbackFrame[0] = 0xd1;
-  playbackFrame[1] = 0x0c;
-  writeU16(playbackFrame + 2, playbackSessionId);
-  writeU32(playbackFrame + 4, playbackSeq);
-  writeU16(playbackFrame + 8, static_cast<uint16_t>(playbackK));
-  writeU16(playbackFrame + 10, PLAYBACK_BLOCK_LEN);
-  writeU32(playbackFrame + 12, playbackSize);
-  writeU32(playbackFrame + 16, playbackFnv);
-  const size_t nameLength = min(playbackName.length(), FRAME_HEADER_LEN - 20);
-  playbackName.getBytes(playbackFrame + 20, nameLength + 1);
-  memcpy(playbackFrame + FRAME_HEADER_LEN, playbackBlock, PLAYBACK_BLOCK_LEN);
-
-  const size_t prefixLength = sizeof(PLAYBACK_PREFIX) - 1;
-  memcpy(playbackQrPayload, PLAYBACK_PREFIX, prefixLength);
-  if (!base64Encode(playbackFrame, sizeof(playbackFrame),
-                    playbackQrPayload + prefixLength,
-                    sizeof(playbackQrPayload) - prefixLength)) return false;
-  return true;
-}
-
-void stopPlayback() {
-  playbackActive = false;
-  if (playbackFile) playbackFile.close();
-  std::vector<uint32_t>().swap(playbackIndices);
-  std::vector<uint32_t>().swap(playbackScratch);
-  playbackName = String();
-  playbackFileId = 0;
-  playbackSize = 0;
-  playbackK = 1;
-  playbackSeq = 0;
-}
-
-void startPlayback(uint32_t id) {
-  stopPlayback();
-  const int index = findFile(id);
-  if (index < 0) return;
-  playbackFile = LittleFS.open(filePath(id), "r");
-  if (!playbackFile) {
-    Serial.println("Playback file could not be opened");
-    return;
-  }
-  playbackName = files[index].name;
-  playbackFileId = id;
-  playbackSize = files[index].size;
-  playbackK = max<uint32_t>(1, (playbackSize + PLAYBACK_BLOCK_LEN - 1) / PLAYBACK_BLOCK_LEN);
-  playbackFnv = fileFnv(playbackFile);
-  playbackSessionId = static_cast<uint16_t>(esp_random() & 0xffffu);
-  if (!playbackSessionId) playbackSessionId = 1;
-  if (!buildPlaybackDistribution()) {
-    Serial.println("Playback fountain distribution could not be allocated");
-    stopPlayback();
-    return;
-  }
-  playbackSeq = 0;
-  playbackNextAt = 0;
-  playbackActive = true;
-  screenDirty = true;
-  Serial.printf("Playback started: %s · %u bytes · K=%u · block=%u\n",
-                playbackName.c_str(), static_cast<unsigned>(playbackSize),
-                static_cast<unsigned>(playbackK),
-                static_cast<unsigned>(PLAYBACK_BLOCK_LEN));
-}
-
 void sendJson(int code, const String &body) {
   server.sendHeader("Cache-Control", "no-store");
   server.send(code, "application/json; charset=utf-8", body);
@@ -595,10 +310,6 @@ void rejectUpload(const String &reason) {
 void handleUploadData() {
   HTTPUpload &upload = server.upload();
   if (upload.status == UPLOAD_FILE_START) {
-    // Free the playback file and all transient fountain memory before the
-    // WebServer starts buffering a new upload.
-    pendingPlaybackId = 0;
-    stopPlayback();
     screenDirty = true;
     uploadOk = false;
     uploadRejected = false;
@@ -663,9 +374,6 @@ void handleUploadDone() {
     return;
   }
   screenDirty = true;
-  // Respond first. Hashing and preparing a multi-megabyte optical stream in
-  // the HTTP callback made phones report a failed upload and could starve AP.
-  pendingPlaybackId = uploadId;
   sendJson(201, String(F("{\"ok\":true,\"name\":\"")) + jsonEscape(uploadName) + F("\"}"));
 }
 
@@ -685,9 +393,52 @@ void handleDownload() {
     server.send(404, "text/plain; charset=utf-8", "File not found");
     return;
   }
+  const size_t total = file.size();
+  size_t start = 0;
+  size_t end = total ? total - 1 : 0;
+  bool partial = false;
+  const String range = server.header("Range");
+  if (range.startsWith("bytes=")) {
+    const int dash = range.indexOf('-', 6);
+    if (dash > 6) {
+      start = static_cast<size_t>(strtoul(range.substring(6, dash).c_str(), nullptr, 10));
+      if (dash + 1 < static_cast<int>(range.length()))
+        end = static_cast<size_t>(strtoul(range.substring(dash + 1).c_str(), nullptr, 10));
+      end = min(end, total ? total - 1 : 0);
+      partial = start < total && start <= end;
+    }
+  }
+  if (range.length() && !partial) {
+    file.close();
+    server.sendHeader("Content-Range", String("bytes */") + String(total));
+    server.send(416, "text/plain; charset=utf-8", "Invalid byte range");
+    return;
+  }
+  const size_t length = total ? end - start + 1 : 0;
+  if (start) file.seek(start);
   server.sendHeader("Content-Disposition", String("attachment; filename=\"") + files[index].name + "\"");
-  server.sendHeader("Cache-Control", "no-store");
-  server.streamFile(file, files[index].mime);
+  server.sendHeader("Accept-Ranges", "bytes");
+  server.sendHeader("Cache-Control", "private, max-age=31536000, immutable");
+  if (partial)
+    server.sendHeader("Content-Range", String("bytes ") + String(start) + "-" + String(end) + "/" + String(total));
+  server.setContentLength(length);
+  server.send(partial ? 206 : 200, files[index].mime, "");
+  WiFiClient client = server.client();
+  size_t remaining = length;
+  while (remaining && client.connected()) {
+    const size_t wanted = min(remaining, sizeof(downloadBuffer));
+    const size_t count = file.read(downloadBuffer, wanted);
+    if (!count) break;
+    size_t sent = 0;
+    while (sent < count && client.connected()) {
+      const size_t written = client.write(downloadBuffer + sent, count - sent);
+      if (!written) break;
+      sent += written;
+    }
+    remaining -= sent;
+    if (sent != count) break;
+    delay(0);
+  }
   file.close();
 }
 
@@ -772,11 +523,12 @@ void updateSideButton(uint32_t now) {
   if (!pressed || now - sideButtonHandledAt < 250) return;
   sideButtonHandledAt = now;
   if (fileCount > 0) {
-    pendingPlaybackId = files[fileCount - 1].id;
-    Serial.printf("Side button: latest file %s queued\n",
+    latestScreenOverride = true;
+    latestScreenUntil = now + 30000;
+    screenDirty = true;
+    Serial.printf("Side button: showing latest file %s\n",
                   files[fileCount - 1].name.c_str());
   } else {
-    stopPlayback();
     screenDirty = true;
     Serial.println("Side button: no uploaded file yet");
   }
@@ -792,38 +544,8 @@ void drawCentered(const String &text, int y, uint16_t color, uint8_t size = 1) {
 
 void drawQr(esp_qrcode_handle_t code) {
   const int modules = esp_qrcode_get_size(code);
-  if (playbackActive) {
-    // Playback frames are intentionally dense. An integer-only scale would
-    // collapse them to a tiny 1px QR, as happened on the physical display.
-    // Fill the usable square with nearest-neighbor module boundaries instead;
-    // the resulting 1.5–2px modules preserve the payload and use the screen.
-    const int total = min(Board::WIDTH, Board::HEIGHT) - 8;
-    const float moduleScale = static_cast<float>(total) /
-                              static_cast<float>(modules + 8);
-    lastQrTotal = total;
-    const int x = (Board::WIDTH - total) / 2;
-    const int y = (Board::HEIGHT - total) / 2;
-    display->fillRect(x, y, total, total, Color::PAPER);
-    for (int row = 0; row < modules; ++row) {
-      for (int column = 0; column < modules; ++column) {
-        const bool dark = esp_qrcode_get_module(code, column, row);
-        const size_t sampleIndex = static_cast<size_t>(row * modules + column);
-        const uint8_t source = playbackFrame[sampleIndex % sizeof(playbackFrame)];
-        const uint8_t shift = static_cast<uint8_t>((sampleIndex & 3u) * 2u);
-        const uint8_t chroma = (source >> shift) & 3u;
-        const int left = x + static_cast<int>((column + 4) * moduleScale + 0.5f);
-        const int right = x + static_cast<int>((column + 5) * moduleScale + 0.5f);
-        const int top = y + static_cast<int>((row + 4) * moduleScale + 0.5f);
-        const int bottom = y + static_cast<int>((row + 5) * moduleScale + 0.5f);
-        display->fillRect(left, top, max(1, right - left), max(1, bottom - top),
-                          dark ? Color::DARK_RGB[chroma] : Color::LIGHT_RGB[chroma]);
-      }
-    }
-    return;
-  }
   const int scale = max(1, min(5, (Board::WIDTH - 16) / (modules + 8)));
   const int total = (modules + 8) * scale;
-  lastQrTotal = total;
   const int x = (Board::WIDTH - total) / 2;
   const int y = 4;
   display->fillRect(x, y, total, total, Color::PAPER);
@@ -864,7 +586,7 @@ void drawJoinScreen() {
   drawCentered(String(fileCount) + (fileCount == 1 ? " FILE READY" : " FILES READY"),
                264, Color::MUTED, 1);
   display->flush();
-  Serial.printf("Join QR: %s / %s\n", apSsid.c_str(), apPassword.c_str());
+  Serial.printf("Join QR: %s (open)\n", apSsid.c_str());
 }
 
 void drawPortalScreen() {
@@ -883,38 +605,34 @@ void drawPortalScreen() {
   Serial.println("Portal QR: http://192.168.4.1/upload");
 }
 
-void drawPlaybackScreen() {
+void drawLatestScreen() {
   display->fillScreen(Color::NIGHT);
-  if (!encodePlaybackFrame()) {
-    ++playbackSeq;
-    display->fillRoundRect(10, 24, 220, 150, 20, Color::PAPER);
-    drawCentered("FRAME ERROR", 80, Color::CORAL, 2);
-    display->flush();
-    return;
-  }
-  const esp_err_t result = drawTextQr(playbackQrPayload, 30, ESP_QRCODE_ECC_LOW);
+  char payload[96] = {};
+  snprintf(payload, sizeof(payload), "http://192.168.4.1/download?id=%lu",
+           static_cast<unsigned long>(files[fileCount - 1].id));
+  const esp_err_t result = drawTextQr(payload, 8, ESP_QRCODE_ECC_MED);
   if (result != ESP_OK) {
     display->fillRoundRect(10, 24, 220, 150, 20, Color::PAPER);
     drawCentered("QR ERROR", 80, Color::CORAL, 2);
-  } else if (lastQrTotal <= 224) {
-    drawCentered("SCAN TO RECEIVE", 232, Color::MINT, 1);
-    drawCentered(playbackName, 250, Color::PAPER, 1);
   }
+  drawCentered("DOWNLOAD LATEST", 210, Color::MINT, 1);
+  drawCentered(files[fileCount - 1].name, 228, Color::PAPER, 1);
+  drawCentered(String(files[fileCount - 1].size / 1024) + " KB · LOCAL WI-FI", 246,
+               Color::MUTED, 1);
+  drawCentered("fast HTTP transfer", 264, Color::GOLD, 1);
   display->flush();
-  if (playbackSeq == 0) {
-    Serial.printf("Playback QR ready: payload=%u chars, QR=%d px\n",
-                  static_cast<unsigned>(strlen(playbackQrPayload)), lastQrTotal);
-  }
-  ++playbackSeq;
+  Serial.printf("Latest QR: %s\n", payload);
 }
 
 void drawCurrentScreen() {
-  if (playbackActive) {
-    drawPlaybackScreen();
-  } else if (WiFi.softAPgetStationNum() > 0) {
-    drawPortalScreen();
-  } else {
+  if (fileCount > 0 && latestScreenOverride) {
+    drawLatestScreen();
+  } else if (WiFi.softAPgetStationNum() == 0) {
     drawJoinScreen();
+  } else if (fileCount > 0) {
+    drawLatestScreen();
+  } else {
+    drawPortalScreen();
   }
 }
 
@@ -936,6 +654,9 @@ void setupWifi() {
     Serial.printf("SoftAP start failed (config=%s)\n", configOk ? "ok" : "failed");
     return;
   }
+  esp_wifi_set_protocol(WIFI_IF_AP,
+                        WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N);
+  esp_wifi_set_bandwidth(WIFI_IF_AP, WIFI_BW_HT20);
   WiFi.setTxPower(WIFI_POWER_19_5dBm);
   delay(200);
   Serial.printf("SoftAP ready at %s on channel 6, clients=%u\n",
@@ -946,6 +667,8 @@ void setupWifi() {
 
 void setupServer() {
   server.enableCORS(true);
+  const char *headers[] = {"Range"};
+  server.collectHeaders(headers, 1);
   // The OS captive-portal mini browser is the shortest path into the beacon.
   // Make every connectivity probe and unknown GET land directly on upload.
   server.on("/", HTTP_GET, handleRoot);
@@ -972,7 +695,6 @@ void setupServer() {
 }
 
 void clearStoredFiles() {
-  stopPlayback();
   fs::File directory = LittleFS.open("/files");
   if (directory && directory.isDirectory()) {
     fs::File entry = directory.openNextFile();
@@ -1042,8 +764,8 @@ void setup() {
   setupWifi();
   setupServer();
   screenDirty = true;
-  Serial.printf("AP %s / %s · %u files · %u/%u bytes used · touch %s\n",
-                apSsid.c_str(), apPassword.c_str(), static_cast<unsigned>(fileCount),
+  Serial.printf("AP %s (open) · %u files · %u/%u bytes used · touch %s\n",
+                apSsid.c_str(), static_cast<unsigned>(fileCount),
                 static_cast<unsigned>(LittleFS.usedBytes()),
                 static_cast<unsigned>(LittleFS.totalBytes()),
                 touchReady ? "ready" : "missing");
@@ -1057,13 +779,9 @@ void loop() {
   server.handleClient();
   updateSideButton(now);
   updateTouch(now);
-  if (pendingPlaybackId) {
-    const uint32_t id = pendingPlaybackId;
-    pendingPlaybackId = 0;
-    startPlayback(id);
-    Serial.printf("Playback prepared · free heap=%u · largest=%u\n",
-                  static_cast<unsigned>(ESP.getFreeHeap()),
-                  static_cast<unsigned>(ESP.getMaxAllocHeap()));
+  if (latestScreenOverride && static_cast<int32_t>(now - latestScreenUntil) >= 0) {
+    latestScreenOverride = false;
+    screenDirty = true;
   }
   const bool stationPresent = WiFi.softAPgetStationNum() > 0;
   if (stationPresent != stationWasPresent) {
@@ -1072,11 +790,6 @@ void loop() {
     Serial.printf("Station %s · %u connected\n",
                   stationPresent ? "connected" : "disconnected",
                   static_cast<unsigned>(WiFi.softAPgetStationNum()));
-  }
-  if (playbackActive &&
-      (playbackNextAt == 0 || static_cast<int32_t>(now - playbackNextAt) >= 0)) {
-    playbackNextAt = now + PLAYBACK_INTERVAL_MS;
-    screenDirty = true;
   }
   if (screenDirty) {
     screenDirty = false;
