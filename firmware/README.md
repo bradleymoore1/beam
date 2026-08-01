@@ -6,9 +6,9 @@ always-on offline library:
 
 - the board starts an open local Wi-Fi hotspot;
 - the screen first shows a standard Wi-Fi QR that phones can scan;
-- after a phone joins, the screen switches to a second QR for the local upload page;
-- visitors land on a local `/browse` library and download published files;
-- the public `/upload` portal accepts files from anyone connected to the hotspot;
+- after a phone joins, the screen switches to a second QR for the local captive page;
+- visitors land on one unified page with the latest download first;
+- the captive portal puts the latest download first and accepts a public replacement without a PIN;
 - each successful upload atomically replaces the previous trail file;
 - after an upload, the display shows a standard QR that downloads the latest
   file over the local Wi-Fi link;
@@ -18,8 +18,9 @@ always-on offline library:
 
 The board has 16 MB flash and no SD card in this hardware configuration. The
 custom partition gives the app 5 MB and the local LittleFS library about 10.9
-MB. The firmware currently caps the latest file at 8 MB and keeps one
-published file so storage use and the public experience stay predictable. A
+MB. The firmware caps the latest file at 5 MB so the current file and its
+replacement can coexist until the replacement is safely committed. It keeps
+one published file so storage use and the public experience stay predictable. A
 future SD-card hardware revision can remove that ceiling without changing the
 visitor portal contract.
 

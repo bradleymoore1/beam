@@ -207,7 +207,9 @@ anyone connected to the hotspot, with no PIN or internet required. After an
 upload the display shows a standard latest-file QR and transfers the payload
 over local 802.11n HTTP with resumable byte ranges. This is dramatically faster
 and more reliable than trying to resolve thousands of optical modules on a
-240×280 display. It keeps one latest file up to 8 MB in internal flash. See
+240×280 display. It keeps one latest file up to 5 MB in internal flash, a
+limit chosen so a replacement can be committed without deleting the current
+file first. See
 [`firmware/README.md`](firmware/README.md) for the deliberate flash step and
 field workflow.
 

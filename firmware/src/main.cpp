@@ -9,6 +9,8 @@
 #include <esp_system.h>
 #include <qrcode.h>
 
+#include "portal.h"
+
 // Trail Beacon is intentionally a sibling firmware project. Flashing it
 // replaces the app on the board, but does not touch the existing baby-girl-
 // display checkout at /Users/bradleym.moore/Downloads/baby-girl-display.
@@ -32,7 +34,10 @@ constexpr uint16_t MUTED = 0x9B3B;
 }  // namespace Color
 
 constexpr size_t MAX_FILES = 8;
-constexpr size_t MAX_FILE_BYTES = 8 * 1024 * 1024;
+// The temporary upload and current file coexist until commit. Five MiB leaves
+// room for both plus LittleFS metadata on the 0xAE0000 data partition.
+constexpr size_t MAX_FILE_BYTES = 5 * 1024 * 1024;
+constexpr size_t STORAGE_RESERVE_BYTES = 384 * 1024;
 constexpr uint8_t STORAGE_LAYOUT_VERSION = 2;
 constexpr char MANIFEST_PATH[] = "/manifest.tsv";
 constexpr char MANIFEST_TEMP_PATH[] = "/manifest.new";
@@ -229,6 +234,10 @@ bool saveLatestManifest(const BeaconFile &entry) {
 
 void loadManifest() {
   fileCount = 0;
+  // Complete or roll back an interrupted atomic manifest swap before parsing.
+  if (!LittleFS.exists(MANIFEST_PATH) && LittleFS.exists(MANIFEST_BACKUP_PATH))
+    LittleFS.rename(MANIFEST_BACKUP_PATH, MANIFEST_PATH);
+  LittleFS.remove(MANIFEST_TEMP_PATH);
   if (!LittleFS.exists(MANIFEST_PATH)) return;
   fs::File file = LittleFS.open(MANIFEST_PATH, "r");
   if (!file) return;
@@ -255,6 +264,31 @@ void loadManifest() {
   if (!nextFileId) nextFileId = 1;
 }
 
+void removeOrphanedPayloads() {
+  fs::File directory = LittleFS.open("/files");
+  if (!directory || !directory.isDirectory()) return;
+  fs::File entry = directory.openNextFile();
+  while (entry) {
+    const String path = entry.path();
+    entry.close();
+    bool referenced = false;
+    for (size_t index = 0; index < fileCount; ++index) {
+      if (path == filePath(files[index].id)) {
+        referenced = true;
+        break;
+      }
+    }
+    if (!referenced && path.length()) {
+      LittleFS.remove(path);
+      Serial.printf("Removed interrupted payload: %s\n", path.c_str());
+    }
+    entry = directory.openNextFile();
+  }
+  directory.close();
+  LittleFS.remove(TEMP_PATH);
+  LittleFS.remove(MANIFEST_BACKUP_PATH);
+}
+
 String manifestJson() {
   String body;
   body.reserve(512 + fileCount * 140);
@@ -264,7 +298,9 @@ String manifestJson() {
   body += String(LittleFS.usedBytes());
   body += F(",\"total\":");
   body += String(LittleFS.totalBytes());
-  body += F("},\"files\":[");
+  body += F("},\"uploadLimit\":");
+  body += String(MAX_FILE_BYTES);
+  body += F(",\"transport\":\"wifi-http-range\",\"protocol\":3,\"files\":[");
   for (size_t i = 0; i < fileCount; ++i) {
     if (i) body += ',';
     body += F("{\"id\":");
@@ -292,11 +328,11 @@ void handleManifest() { sendJson(200, manifestJson()); }
 
 void handleRoot() {
   server.sendHeader("Cache-Control", "no-store");
-  server.send_P(200, "text/html; charset=utf-8", UPLOAD_HTML);
+  server.send_P(200, "text/html; charset=utf-8", PORTAL_HTML);
 }
 
 void handleBrowse() {
-  server.send_P(200, "text/html; charset=utf-8", BROWSE_HTML);
+  handleRoot();
 }
 
 void rejectUpload(const String &reason) {
@@ -323,7 +359,12 @@ void handleUploadData() {
   } else if (upload.status == UPLOAD_FILE_WRITE) {
     if (uploadRejected || !uploadFile) return;
     if (uploadedBytes + upload.currentSize > MAX_FILE_BYTES) {
-      rejectUpload("File exceeds the 8 MB beacon limit");
+      rejectUpload("File exceeds the safe 5 MB beacon limit");
+      return;
+    }
+    const size_t freeBytes = LittleFS.totalBytes() - LittleFS.usedBytes();
+    if (upload.currentSize + STORAGE_RESERVE_BYTES > freeBytes) {
+      rejectUpload("Not enough storage to commit this file safely");
       return;
     }
     const size_t written = uploadFile.write(upload.buf, upload.currentSize);
@@ -332,6 +373,7 @@ void handleUploadData() {
       return;
     }
     uploadedBytes += written;
+    delay(0);
   } else if (upload.status == UPLOAD_FILE_END) {
     if (uploadRejected || !uploadFile) return;
     uploadFile.close();
@@ -394,6 +436,13 @@ void handleDownload() {
     return;
   }
   const size_t total = file.size();
+  const String etag = String("\"beam-") + String(id) + "-" + String(total) + "\"";
+  if (server.header("If-None-Match") == etag) {
+    file.close();
+    server.sendHeader("ETag", etag);
+    server.send(304, files[index].mime, "");
+    return;
+  }
   size_t start = 0;
   size_t end = total ? total - 1 : 0;
   bool partial = false;
@@ -418,12 +467,14 @@ void handleDownload() {
   if (start) file.seek(start);
   server.sendHeader("Content-Disposition", String("attachment; filename=\"") + files[index].name + "\"");
   server.sendHeader("Accept-Ranges", "bytes");
+  server.sendHeader("ETag", etag);
   server.sendHeader("Cache-Control", "private, max-age=31536000, immutable");
   if (partial)
     server.sendHeader("Content-Range", String("bytes ") + String(start) + "-" + String(end) + "/" + String(total));
   server.setContentLength(length);
   server.send(partial ? 206 : 200, files[index].mime, "");
   WiFiClient client = server.client();
+  client.setNoDelay(true);
   size_t remaining = length;
   while (remaining && client.connected()) {
     const size_t wanted = min(remaining, sizeof(downloadBuffer));
@@ -665,10 +716,10 @@ void setupWifi() {
 
 void setupServer() {
   server.enableCORS(true);
-  const char *headers[] = {"Range"};
-  server.collectHeaders(headers, 1);
+  const char *headers[] = {"Range", "If-None-Match"};
+  server.collectHeaders(headers, 2);
   // The OS captive-portal mini browser is the shortest path into the beacon.
-  // Make every connectivity probe and unknown GET land directly on upload.
+  // Make every connectivity probe and unknown GET land on the unified portal.
   server.on("/", HTTP_GET, handleRoot);
   server.on("/upload", HTTP_GET, handleRoot);
   server.on("/admin", HTTP_GET, handleRoot);
@@ -725,6 +776,8 @@ void setupStorage() {
   loadManifest();
   if (preferences.getUChar("storage-ver", 0) != STORAGE_LAYOUT_VERSION)
     clearStoredFiles();
+  else
+    removeOrphanedPayloads();
 }
 
 void setupPreferences() {
