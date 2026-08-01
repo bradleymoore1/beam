@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#0a0a0f" />
     <meta name="description" content="Beam — receive any file using light. No internet, no Bluetooth, no pairing." />
     <meta name="mobile-web-app-capable" content="yes" />
@@ -13,9 +13,11 @@
     <link rel="apple-touch-icon" href="../icon-180x180.png" />
     <link rel="manifest" href="/beam/manifest.webmanifest" />
     <title>Beam — Receive</title>
-    <script type="module" crossorigin src="/beam/assets/receive-CU-XwpVZ.js"></script>
-    <link rel="modulepreload" crossorigin href="/beam/assets/fountain-DbuM7b6K.js">
-    <link rel="stylesheet" crossorigin href="/beam/assets/style-CFtVpQi2.css">
+    <script type="module" crossorigin src="/beam/assets/receive-BQAAaVQo.js"></script>
+    <link rel="modulepreload" crossorigin href="/beam/assets/modulepreload-polyfill-B5Qt9EMX.js">
+    <link rel="modulepreload" crossorigin href="/beam/assets/fountain-DEqFauz3.js">
+    <link rel="modulepreload" crossorigin href="/beam/assets/camera-zoom-D9yuZTdK.js">
+    <link rel="stylesheet" crossorigin href="/beam/assets/style-Cc-LfXne.css">
   </head>
   <body>
     <a href="../" class="back-link">← Home</a>
@@ -72,13 +74,20 @@
     </div>
 
     <div class="preview" id="preview" style="display: none">
-      <video id="video" muted playsinline></video>
+      <video id="video" muted playsinline aria-label="Camera preview for scanning the sender's QR code"></video>
+      <div class="camera-tools" id="zoom-controls" hidden>
+        <button class="zoom-step" id="zoom-minus" type="button" aria-label="Zoom out">−</button>
+        <label class="zoom-slider">Zoom <input id="zoom-range" type="range" min="1" max="4" step="0.1" value="1" aria-label="Camera zoom" /></label>
+        <button class="zoom-step" id="zoom-plus" type="button" aria-label="Zoom in">+</button>
+        <output class="zoom-value" id="zoom-value">1.0×</output>
+        <span class="zoom-mode" id="zoom-mode">digital crop</span>
+      </div>
     </div>
 
     <div class="progress" id="progress" style="display: none"><div id="bar"></div></div>
     <div id="result"></div>
     <script>
-        if ("serviceWorker" in navigator) {
+        if ("serviceWorker" in navigator && "production" === "production") {
             navigator.serviceWorker.register("/beam/sw.js").catch(function () {});
         }
     </script>

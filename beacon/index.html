@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#0a0a0f" />
+    <meta name="description" content="Beam Beacon — scan an offline trail library." />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Beam Beacon" />
+    <link rel="icon" type="image/png" href="../icon-192x192.png" />
+    <link rel="apple-touch-icon" href="../icon-180x180.png" />
+    <link rel="manifest" href="/beam/manifest.webmanifest" />
+    <title>Beam · Beacon</title>
+    <style>
+      .beacon-shell { max-width: 620px; width: 100%; text-align: center; }
+      .beacon-kicker { color: var(--accent-primary); text-transform: uppercase; letter-spacing: .14em; font-size: .75rem; font-weight: 800; }
+      .beacon-shell h1 { margin-bottom: .35rem; }
+      .beacon-shell h2 { margin-bottom: .9rem; }
+      .beacon-card { background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 20px; padding: 1.1rem; margin: 1.1rem 0; }
+      .beacon-preview { width: 100%; max-width: 520px; margin: 1.2rem auto; border-radius: 20px; overflow: hidden; background: #000; box-shadow: 0 12px 35px rgba(0,0,0,.45); }
+      .beacon-preview video { width: 100%; display: block; aspect-ratio: 4/3; object-fit: cover; }
+      .beacon-result { display: grid; gap: .7rem; text-align: left; }
+      .beacon-value { display: flex; align-items: center; justify-content: space-between; gap: .8rem; padding: .85rem; background: rgba(0,0,0,.25); border-radius: 12px; }
+      .beacon-value span { color: var(--muted-color); font-size: .78rem; text-transform: uppercase; letter-spacing: .08em; }
+      .beacon-value code { color: var(--accent-secondary); font-size: 1rem; overflow-wrap: anywhere; }
+      .beacon-actions { display: flex; gap: .7rem; flex-wrap: wrap; margin-top: .9rem; }
+      .beacon-actions > * { flex: 1 1 190px; }
+      .beacon-steps { text-align: left; color: #ccc; margin: .9rem 0 0; padding-left: 1.25rem; }
+      .beacon-steps li + li { margin-top: .45rem; }
+      .beacon-status { min-height: 1.6rem; }
+      .beacon-foot { margin-top: 1.4rem; }
+    </style>
+    <script type="module" crossorigin src="/beam/assets/beacon-Dder4ykO.js"></script>
+    <link rel="modulepreload" crossorigin href="/beam/assets/modulepreload-polyfill-B5Qt9EMX.js">
+    <link rel="modulepreload" crossorigin href="/beam/assets/camera-zoom-D9yuZTdK.js">
+    <link rel="stylesheet" crossorigin href="/beam/assets/style-Cc-LfXne.css">
+  </head>
+  <body>
+    <a href="../" class="back-link">← Home</a>
+    <main class="beacon-shell">
+      <div class="beacon-kicker">Beam · offline field mode</div>
+      <h1>Find the signal.</h1>
+      <h2>Scan a Trail Beacon</h2>
+      <p class="explanation">Point your camera at the little screen. We’ll show you how to join its local Wi‑Fi and open the files waiting there.</p>
+      <button id="start" class="button">Scan beacon</button>
+      <div id="status" class="hint beacon-status">Camera is off.</div>
+      <div id="preview" class="beacon-preview" hidden>
+        <video id="video" muted playsinline aria-label="Camera preview for scanning a Trail Beacon QR code"></video>
+        <div class="camera-tools" id="zoom-controls" hidden>
+          <button class="zoom-step" id="zoom-minus" type="button" aria-label="Zoom out">−</button>
+          <label class="zoom-slider">Zoom <input id="zoom-range" type="range" min="1" max="4" step="0.1" value="1" aria-label="Camera zoom" /></label>
+          <button class="zoom-step" id="zoom-plus" type="button" aria-label="Zoom in">+</button>
+          <output class="zoom-value" id="zoom-value">1.0×</output>
+          <span class="zoom-mode" id="zoom-mode">digital crop</span>
+        </div>
+      </div>
+      <section id="result" class="beacon-card beacon-result" hidden>
+        <div>
+          <div class="beacon-kicker">Beacon found</div>
+          <h2 id="result-title">Join the local trail network</h2>
+        </div>
+        <div class="beacon-value"><span>Wi‑Fi</span><code id="ssid">—</code></div>
+        <div class="beacon-value"><span>Password</span><code id="password">—</code></div>
+        <ol class="beacon-steps">
+          <li>Join the Wi‑Fi above in your phone’s Wi‑Fi settings.</li>
+          <li>Come back here and open the local library.</li>
+        </ol>
+        <div class="beacon-actions">
+          <button id="copy" class="button button-secondary">Copy password</button>
+          <button id="open" class="button">Open trail library</button>
+        </div>
+      </section>
+      <div class="hint beacon-foot">The library lives on the beacon. No cellular service or internet account required.</div>
+    </main>
+    <script>
+      if ("serviceWorker" in navigator && "production" === "production") {
+        navigator.serviceWorker.register("/beam/sw.js").catch(function () {});
+      }
+    </script>
+  </body>
+</html>

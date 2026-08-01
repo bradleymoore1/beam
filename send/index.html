@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#0a0a0f" />
     <meta name="description" content="Beam — send any file using light. No internet, no Bluetooth, no pairing." />
     <meta name="mobile-web-app-capable" content="yes" />
@@ -13,21 +13,22 @@
     <link rel="apple-touch-icon" href="../icon-180x180.png" />
     <link rel="manifest" href="/beam/manifest.webmanifest" />
     <title>Beam — Send</title>
-    <script type="module" crossorigin src="/beam/assets/send-CCcxfMLL.js"></script>
-    <link rel="modulepreload" crossorigin href="/beam/assets/fountain-DbuM7b6K.js">
-    <link rel="stylesheet" crossorigin href="/beam/assets/style-CFtVpQi2.css">
+    <script type="module" crossorigin src="/beam/assets/send-Cex7w0Ow.js"></script>
+    <link rel="modulepreload" crossorigin href="/beam/assets/modulepreload-polyfill-B5Qt9EMX.js">
+    <link rel="modulepreload" crossorigin href="/beam/assets/fountain-DEqFauz3.js">
+    <link rel="stylesheet" crossorigin href="/beam/assets/style-Cc-LfXne.css">
   </head>
   <body>
     <a href="../" class="back-link">← Home</a>
     <h1>Beam</h1>
     <h2>Send any file</h2>
 
-    <div id="dropzone" class="dropzone">
+    <label id="dropzone" class="dropzone" for="file-input" role="button" tabindex="0" aria-label="Choose a file to send">
       <span class="icon">⬆️</span>
       <p>Drag &amp; drop a file here</p>
       <div class="hint">…or tap to pick one. Any file type, any size.</div>
       <input type="file" id="file-input" style="display: none;" />
-    </div>
+    </label>
 
     <div class="hint" id="specs">No file loaded yet</div>
 
@@ -35,13 +36,22 @@
       <summary>Tuning</summary>
       <div class="row">
         <label>
+          channel
+          <select id="cfg-mode">
+            <option value="mono" selected>monochrome QR</option>
+            <option value="color">color burst · experimental</option>
+            <option value="custom-safe">RGB tile video · safe</option>
+            <option value="custom">RGB tile video · turbo</option>
+          </select>
+        </label>
+        <label>
           tx fps
           <select id="cfg-fps">
             <option>10</option>
             <option>15</option>
             <option>20</option>
-            <option selected>24</option>
-            <option>30</option>
+            <option>24</option>
+            <option selected>30</option>
             <option>60</option>
           </select>
         </label>
@@ -70,20 +80,20 @@
           <input id="cfg-size" type="range" min="300" max="1200" step="50" value="900" />
         </label>
       </div>
-      <div class="hint" style="text-align: left; padding-top: 8px">
+      <div class="hint" id="tuning-hint" style="text-align: left; padding-top: 8px">
         Changes restart the stream — the receiver resets automatically (new
         session id in the frame headers; that's the fountain protocol's gift).
       </div>
     </details>
 
-    <div class="stage" id="stage" style="display: none;"><canvas id="qr" width="16" height="16"></canvas></div>
+    <div class="stage" id="stage" style="display: none;"><canvas id="qr" width="16" height="16" role="img" aria-label="Animated QR transfer frame"></canvas></div>
 
     <div class="hint">
       Max screen brightness helps. The stream loops forever — stop when the
       receiver says done.
     </div>
     <script>
-        if ("serviceWorker" in navigator) {
+        if ("serviceWorker" in navigator && "production" === "production") {
             navigator.serviceWorker.register("/beam/sw.js").catch(function () {});
         }
     </script>
