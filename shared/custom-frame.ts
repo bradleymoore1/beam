@@ -21,7 +21,7 @@ export const CUSTOM_CALIBRATION_COPIES = 4;
 
 const MAGIC0 = 0xb3;
 const MAGIC1 = 0x54;
-const PROTOCOL_VERSION = 1;
+const PROTOCOL_VERSION = 2;
 const BORDER_CELLS = 2;
 
 export type CustomPoint = { x: number; y: number };
@@ -68,7 +68,7 @@ export type CustomLocator = {
 const cachedLayouts = new Map<number, CustomLayout>();
 
 function locatorText(size: number): string {
-  return `B${size}`;
+  return `H${size}`;
 }
 
 function setReserved(layout: Uint8Array, size: number, x: number, y: number): void {
@@ -211,7 +211,9 @@ export function customCapacityForBits(
   layout: CustomLayout = createCustomLayout(),
   symbolBits: number,
 ): number {
-  return Math.floor((layout.dataPositions.length * symbolBits) / 8);
+  if (symbolBits !== CUSTOM_BINARY_SYMBOL_BITS) throw new Error("unsupported custom symbol depth");
+  // Extended Hamming(8,4) stores four protected payload bits in eight tiles.
+  return Math.floor(layout.dataPositions.length / 16);
 }
 
 function fillerSymbol(symbolIndex: number, seed: number, symbolBits: number): number {
@@ -244,20 +246,73 @@ export function customSymbolAt(
 
 export function createCustomEnvelope(
   raw: Uint8Array,
+  decodedCapacity: number,
   symbolBits = CUSTOM_BINARY_SYMBOL_BITS,
 ): Uint8Array {
   if (symbolBits !== CUSTOM_BINARY_SYMBOL_BITS) throw new Error("unsupported custom symbol depth");
   if (raw.length > 0xffff) throw new Error("custom frame is too large");
-  const out = new Uint8Array(CUSTOM_HEADER_LEN + raw.length);
-  const view = new DataView(out.buffer);
+  if (CUSTOM_HEADER_LEN + raw.length > decodedCapacity) throw new Error("custom frame exceeds carrier");
+  const decoded = new Uint8Array(decodedCapacity);
+  const padSeed = fnv1a(raw);
+  for (let index = 0; index < decoded.length; index++) {
+    decoded[index] = fillerSymbol(index, padSeed, 8);
+  }
+  const view = new DataView(decoded.buffer);
   view.setUint8(0, MAGIC0);
   view.setUint8(1, MAGIC1);
   view.setUint8(2, PROTOCOL_VERSION);
   view.setUint8(3, symbolBits);
   view.setUint16(4, raw.length, true);
   view.setUint32(6, fnv1a(raw), true);
-  out.set(raw, CUSTOM_HEADER_LEN);
-  return out;
+  decoded.set(raw, CUSTOM_HEADER_LEN);
+
+  // Interleave codeword bit planes across the whole field. A local blur then
+  // flips at most one bit in many codewords instead of several bits in one,
+  // which lets Hamming correct the burst rather than rejecting the frame.
+  const codewordCount = decoded.length * 2;
+  const encoded = new Uint8Array(decoded.length * 2);
+  for (let codewordIndex = 0; codewordIndex < codewordCount; codewordIndex++) {
+    const source = decoded[codewordIndex >> 1]!;
+    const nibble = codewordIndex & 1 ? source & 0x0f : source >>> 4;
+    const codeword = encodeHamming84(nibble);
+    for (let plane = 0; plane < 8; plane++) {
+      const outputBit = plane * codewordCount + codewordIndex;
+      const bit = (codeword >> (7 - plane)) & 1;
+      encoded[outputBit >> 3] |= bit << (7 - (outputBit & 7));
+    }
+  }
+  return encoded;
+}
+
+function encodeHamming84(nibble: number): number {
+  const bits = new Uint8Array(9);
+  bits[3] = (nibble >> 3) & 1;
+  bits[5] = (nibble >> 2) & 1;
+  bits[6] = (nibble >> 1) & 1;
+  bits[7] = nibble & 1;
+  bits[1] = bits[3]! ^ bits[5]! ^ bits[7]!;
+  bits[2] = bits[3]! ^ bits[6]! ^ bits[7]!;
+  bits[4] = bits[5]! ^ bits[6]! ^ bits[7]!;
+  bits[8] = bits[1]! ^ bits[2]! ^ bits[3]! ^ bits[4]! ^ bits[5]! ^ bits[6]! ^ bits[7]!;
+  let codeword = 0;
+  for (let position = 1; position <= 8; position++) codeword = (codeword << 1) | bits[position]!;
+  return codeword;
+}
+
+function decodeHamming84(codeword: number): number {
+  const bits = new Uint8Array(9);
+  for (let position = 1; position <= 8; position++) {
+    bits[position] = (codeword >> (8 - position)) & 1;
+  }
+  const syndrome =
+    (bits[1]! ^ bits[3]! ^ bits[5]! ^ bits[7]!) |
+    ((bits[2]! ^ bits[3]! ^ bits[6]! ^ bits[7]!) << 1) |
+    ((bits[4]! ^ bits[5]! ^ bits[6]! ^ bits[7]!) << 2);
+  const overall = bits[1]! ^ bits[2]! ^ bits[3]! ^ bits[4]! ^
+    bits[5]! ^ bits[6]! ^ bits[7]! ^ bits[8]!;
+  if (syndrome && overall) bits[syndrome] ^= 1;
+  else if (syndrome && !overall) return -1;
+  return (bits[3]! << 3) | (bits[5]! << 2) | (bits[6]! << 1) | bits[7]!;
 }
 
 function parseCustomHeader(
@@ -279,16 +334,20 @@ function parseCustomHeader(
 }
 
 export function decodeCustomEnvelope(symbols: Uint8Array, symbolBits: number): Uint8Array | null {
-  const bytes = new Uint8Array(Math.floor((symbols.length * symbolBits) / 8));
-  for (let index = 0; index < bytes.length; index++) {
-    let value = 0;
-    for (let bit = 0; bit < 8; bit++) {
-      const offset = index * 8 + bit;
-      const symbol = symbols[Math.floor(offset / symbolBits)] ?? 0;
-      value = (value << 1) |
-        ((symbol >> (symbolBits - 1 - (offset % symbolBits))) & 1);
+  if (symbolBits !== CUSTOM_BINARY_SYMBOL_BITS) return null;
+  const decodedCapacity = Math.floor(symbols.length / 16);
+  const codewordCount = decodedCapacity * 2;
+  const bytes = new Uint8Array(decodedCapacity);
+  for (let codewordIndex = 0; codewordIndex < codewordCount; codewordIndex++) {
+    let codeword = 0;
+    for (let plane = 0; plane < 8; plane++) {
+      codeword = (codeword << 1) | (symbols[plane * codewordCount + codewordIndex] ?? 0);
     }
-    bytes[index] = value;
+    const nibble = decodeHamming84(codeword);
+    if (nibble < 0) return null;
+    const byteIndex = codewordIndex >> 1;
+    if (codewordIndex & 1) bytes[byteIndex] |= nibble;
+    else bytes[byteIndex] = nibble << 4;
   }
   const header = parseCustomHeader(bytes);
   if (!header || header.rawLen > bytes.length - CUSTOM_HEADER_LEN) return null;
@@ -298,8 +357,7 @@ export function decodeCustomEnvelope(symbols: Uint8Array, symbolBits: number): U
 
 export function customGridSizeFromLocator(bytes: Uint8Array): number | null {
   const text = new TextDecoder().decode(bytes);
-  if (text === "BMB1") return CUSTOM_DEFAULT_GRID_SIZE;
-  const match = /^B(\d{3})$/.exec(text);
+  const match = /^H(\d{3})$/.exec(text);
   if (!match) return null;
   const size = Number(match[1]);
   return (CUSTOM_GRID_SIZES as readonly number[]).includes(size) ? size : null;

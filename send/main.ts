@@ -198,7 +198,11 @@ async function startStream(payload: Uint8Array) {
     const bytes = packFrame({ ...header, seq: nextSeq }, encoder.encode(nextSeq));
     nextSeq++;
     if (customLayout) {
-      const envelope = createCustomEnvelope(bytes, customBits);
+      const envelope = createCustomEnvelope(
+        bytes,
+        customCapacityForBits(customLayout, customBits),
+        customBits,
+      );
       const padSeed = fnv1a(envelope);
       const total = customLayout.size + 2 * MARGIN;
       const img = new ImageData(total, total);

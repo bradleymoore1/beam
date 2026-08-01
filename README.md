@@ -117,8 +117,8 @@ the camera starts.
 
 | setting | default | notes |
 |---|---|---|
-| channel | binary tiles | fastest on a TV, laptop, tablet, or large phone; standard QR is the compatibility fallback |
-| tx fps | 20 | avoids display/camera refresh aliasing; increase only when the receiver proves it can decode every exposure |
+| channel | standard QR | proven default; binary tiles are experimental until validated on the specific camera/display pair |
+| tx fps | 24 | proven monochrome setting; reduce if camera exposure straddles display refreshes |
 | bytes / frame | automatic | binary mode selects 176², 256², or 352² from screen size; 512² is available manually for 4K |
 
 The parent experiment's measured ceiling with this exact architecture plus
@@ -135,12 +135,14 @@ The profile is encoded in every locator. After the first lock, workers reuse
 the geometry and skip full-frame QR discovery until motion or an integrity
 failure forces reacquisition.
 
-Raw frame capacities are 3,266, 7,506, 14,706, and 31,826 bytes respectively.
-At 20 displayed frames per second their optical ceilings are about 65 KB/s,
-150 KB/s, 294 KB/s, and 637 KB/s before fountain overhead and dropped frames.
-The 512 profile needs a 4K-class sender and 1920-wide or better camera capture;
-it is manual because the default 1280-wide phone capture does not resolve it
-reliably.
+Every binary frame now uses interleaved extended Hamming(8,4) protection. A
+local blur is spread across many codewords, each of which corrects a single
+bit, instead of one bad tile invalidating tens of thousands of otherwise good
+bits. Protected raw capacities are 1,628, 3,748, 7,348, and 15,908 bytes.
+At 20 displayed frames per second their ceilings are about 33 KB/s, 75 KB/s,
+147 KB/s, and 318 KB/s before fountain overhead and dropped frames. The 512
+profile needs a 4K-class sender and 1920-wide or better camera capture; it is
+manual because the default 1280-wide phone capture does not resolve it reliably.
 
 This deliberately chooses fewer states with much wider signal margins. A
 camera must distinguish each state under autofocus, motion blur, exposure,
