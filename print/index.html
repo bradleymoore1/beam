@@ -23,7 +23,7 @@
         <input type="file" id="file-input" hidden />
         <span class="icon">▦</span>
         <p>Choose a file for paper transfer</p>
-        <span class="hint">Recommended up to 100 KB · hard limit 250 KB</span>
+        <span class="hint">Reliable and dense layouts · files up to 3 MB</span>
       </label>
 
       <section class="paper-summary" id="paper-summary" hidden>
@@ -40,6 +40,13 @@
           <div><strong id="estimate-pages">—</strong><span>letter pages</span></div>
           <div><strong id="estimate-recovery">—</strong><span>extra packets</span></div>
         </div>
+        <label class="paper-option">Page density
+          <select id="print-profile">
+            <option value="reliable">12/page · reliable · ECC Q</option>
+            <option value="dense" selected>20/page · dense · ECC M</option>
+          </select>
+        </label>
+        <p class="paper-profile-hint" id="profile-hint"></p>
         <label class="paper-option">Redundancy
           <select id="redundancy">
             <option value="20">20% · compact</option>

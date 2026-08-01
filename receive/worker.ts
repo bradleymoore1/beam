@@ -55,7 +55,7 @@ ctx.onmessage = async (e: MessageEvent) => {
     }
     const results = await readBarcodes(img, {
       formats: ["QRCode"],
-      maxNumberOfSymbols: Math.max(1, Math.min(12, maxSymbols ?? 4)),
+      maxNumberOfSymbols: Math.max(1, Math.min(24, maxSymbols ?? 4)),
       returnErrors: true,
     });
     const carriers = results.filter((x) => x.isValid && x.bytes.length > 0);

@@ -90,7 +90,7 @@ async function start() {
   // Ask for spare candidates in screen mode. At a tight crop ZXing can
   // return one invalid finder candidate before the four real stacked QRs;
   // a limit of exactly four then silently drops one valid packet.
-  scanMaxSymbols = scanSource === "paper" ? 12 : 8;
+  scanMaxSymbols = scanSource === "paper" ? 24 : 8;
   startBtn.disabled = true;
   stats.textContent = "Requesting camera…";
   const base: MediaTrackConstraints = {

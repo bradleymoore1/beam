@@ -586,6 +586,12 @@ select:disabled { opacity: .45; cursor: not-allowed; }
     min-width: 220px;
 }
 
+.paper-profile-hint {
+    margin: -.35rem 0 .8rem;
+    color: var(--muted-color);
+    font-size: .76rem;
+}
+
 .paper-warning {
     margin: 1rem 0;
     padding: .8rem 1rem;
@@ -674,9 +680,19 @@ select:disabled { opacity: .45; cursor: not-allowed; }
     break-inside: avoid;
 }
 
-.print-qr-card svg { width: 100%; height: 100%; max-width: 2.35in; max-height: 2.18in; }
+.print-qr-card svg, .print-qr-card img { width: 100%; height: 100%; max-width: 2.35in; max-height: 2.18in; object-fit: contain; image-rendering: pixelated; }
 .print-qr-card figcaption { font: 700 7pt ui-monospace, monospace; line-height: 1; }
 .print-page-footer { margin-top: .05in; text-align: center; font-size: 7pt; }
+
+.print-page-dense .print-qr-grid {
+    grid-template-columns: repeat(4, 1fr);
+    grid-template-rows: repeat(5, 1fr);
+    gap: .035in;
+}
+
+.print-page-dense .print-qr-card { padding: 0; }
+.print-page-dense .print-qr-card svg, .print-page-dense .print-qr-card img { max-width: 1.78in; max-height: 1.78in; }
+.print-page-dense .print-qr-card figcaption { font-size: 6pt; }
 
 @media (max-width: 680px) {
     .paper-estimates { grid-template-columns: repeat(2, minmax(0, 1fr)); }

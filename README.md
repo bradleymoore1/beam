@@ -45,7 +45,7 @@ npm run dev
   by hash.
 - For a hardware beacon: open `/beacon/`, scan the display, join the Wi-Fi
   shown, and tap **Open trail library**.
-- For a paper packet: open `/print/`, choose a file up to 250 KB, review the
+- For a paper packet: open `/print/`, choose a file up to 3 MB, review the
   page estimate, and print. On the receiver choose **Printed sheets** before
   starting the camera; it collects multiple QRs per camera frame in any order.
 
@@ -172,13 +172,17 @@ tests did not produce reliable goodput; synthetic codec success is not enough.
 
 ### Beam Paper
 
-The print route uses 1,465-byte Version 40 QR packets at error-correction level
-Q, arranged 12 per letter-size page as vector artwork. A finite fountain set is
-simulated before rendering so the complete printed set is known to reconstruct
-the original file. The default adds 35% extra packets plus a small fixed margin.
-The receiver's paper profile requests 1920-wide, 30 FPS capture and asks ZXing
-for up to 12 symbols per camera frame. A 12 KB message is about two pages,
-100 KB is about ten pages, and the 250 KB hard limit is about 22 pages.
+Beam Paper offers two measured profiles. Reliable uses 1,465-byte packets at
+ECC Q in a 3×4 grid. Dense uses 2,300-byte Version 40 packets at ECC M in a
+4×5 grid, which is the practical maximum at roughly three 300-DPI printer dots
+per QR module. A finite fountain set is simulated before rendering so the
+complete printed set is known to reconstruct the original file. The default
+adds 35% extra packets plus a small fixed margin. The receiver's paper profile
+requests 1920-wide, 30 FPS capture and asks ZXing for up to 24 symbols per
+camera frame. A full dense sheet decoded 20/20 packets at 1920-wide in the
+camera harness; 1280 recovered 15/20 and 960 was not viable. Dense mode is
+roughly one page for a short message, four pages for 100 KB, and 98 pages for
+the 3 MB hard limit.
 
 This deliberately chooses fewer states with much wider signal margins. A
 camera must distinguish each state under autofocus, motion blur, exposure,
