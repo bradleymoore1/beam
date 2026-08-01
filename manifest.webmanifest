@@ -1,7 +1,7 @@
 {
-  "name": "Beam — Transfer files using light",
+  "name": "Beam — Local signals through light",
   "short_name": "Beam",
-  "description": "Transfer any file between devices using light — no internet, no Bluetooth, no pairing",
+  "description": "Broadcast signed crowd experiences and transfer files offline using screens, cameras, local Wi-Fi, and print",
   "theme_color": "#0a0a0f",
   "background_color": "#0a0a0f",
   "display": "standalone",

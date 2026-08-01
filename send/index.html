@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#0a0a0f" />
     <meta name="description" content="Beam — send any file using light. No internet, no Bluetooth, no pairing." />
     <meta name="mobile-web-app-capable" content="yes" />
@@ -13,21 +13,23 @@
     <link rel="apple-touch-icon" href="../icon-180x180.png" />
     <link rel="manifest" href="/beam/manifest.webmanifest" />
     <title>Beam — Send</title>
-    <script type="module" crossorigin src="/beam/assets/send-CCcxfMLL.js"></script>
-    <link rel="modulepreload" crossorigin href="/beam/assets/fountain-DbuM7b6K.js">
-    <link rel="stylesheet" crossorigin href="/beam/assets/style-CFtVpQi2.css">
+    <script type="module" crossorigin src="/beam/assets/send-FEliqZ2h.js"></script>
+    <link rel="modulepreload" crossorigin href="/beam/assets/modulepreload-polyfill-B5Qt9EMX.js">
+    <link rel="modulepreload" crossorigin href="/beam/assets/browser-BeMEBtOm.js">
+    <link rel="modulepreload" crossorigin href="/beam/assets/fountain-Bcvdx_52.js">
+    <link rel="stylesheet" crossorigin href="/beam/assets/style-DKMHoLi-.css">
   </head>
   <body>
     <a href="../" class="back-link">← Home</a>
     <h1>Beam</h1>
     <h2>Send any file</h2>
 
-    <div id="dropzone" class="dropzone">
+    <label id="dropzone" class="dropzone" for="file-input" role="button" tabindex="0" aria-label="Choose a file to send">
       <span class="icon">⬆️</span>
       <p>Drag &amp; drop a file here</p>
       <div class="hint">…or tap to pick one. Any file type, any size.</div>
       <input type="file" id="file-input" style="display: none;" />
-    </div>
+    </label>
 
     <div class="hint" id="specs">No file loaded yet</div>
 
@@ -35,12 +37,29 @@
       <summary>Tuning</summary>
       <div class="row">
         <label>
+          transport
+          <select id="cfg-mode">
+            <option value="mono" selected>standard QR · reliable</option>
+            <option value="stacked">4× standard QR · fast</option>
+          </select>
+        </label>
+        <label hidden>
+          density
+          <select id="cfg-density">
+            <option value="auto" selected>auto for screen</option>
+            <option value="176">176×176 · phone</option>
+            <option value="256">256×256 · laptop</option>
+            <option value="352">352×352 · TV</option>
+            <option value="512">512×512 · 4K experimental</option>
+          </select>
+        </label>
+        <label>
           tx fps
           <select id="cfg-fps">
             <option>10</option>
             <option>15</option>
-            <option>20</option>
-            <option selected>24</option>
+            <option selected>20</option>
+            <option>24</option>
             <option>30</option>
             <option>60</option>
           </select>
@@ -59,31 +78,31 @@
         <label>
           error correction
           <select id="cfg-ecc">
-            <option selected>L</option>
+            <option>L</option>
             <option>M</option>
-            <option>Q</option>
+            <option selected>Q</option>
             <option>H</option>
           </select>
         </label>
         <label>
           display size
-          <input id="cfg-size" type="range" min="300" max="1200" step="50" value="900" />
+          <input id="cfg-size" type="range" min="300" max="2200" step="50" value="2200" />
         </label>
       </div>
-      <div class="hint" style="text-align: left; padding-top: 8px">
+      <div class="hint" id="tuning-hint" style="text-align: left; padding-top: 8px">
         Changes restart the stream — the receiver resets automatically (new
         session id in the frame headers; that's the fountain protocol's gift).
       </div>
     </details>
 
-    <div class="stage" id="stage" style="display: none;"><canvas id="qr" width="16" height="16"></canvas></div>
+    <div class="stage" id="stage" style="display: none;"><canvas id="qr" width="16" height="16" role="img" aria-label="Animated optical file-transfer frame"></canvas></div>
 
     <div class="hint">
-      Max screen brightness helps. The stream loops forever — stop when the
-      receiver says done.
+      Max screen brightness helps. Keep all four corner markers in view. The
+      stream loops forever — stop when the receiver says done.
     </div>
     <script>
-        if ("serviceWorker" in navigator) {
+        if ("serviceWorker" in navigator && "production" === "production") {
             navigator.serviceWorker.register("/beam/sw.js").catch(function () {});
         }
     </script>

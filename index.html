@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <meta name="theme-color" content="#0a0a0f">
-    <meta name="description" content="Beam — transfer any file between devices using light. No internet, no Bluetooth, no pairing.">
+    <meta name="description" content="Beam turns screens into local broadcast networks for crowds, files, public signals, and interactive art.">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-title" content="Beam">
@@ -12,26 +12,30 @@
     <link rel="icon" type="image/png" href="./icon-192x192.png">
     <link rel="apple-touch-icon" href="./icon-180x180.png">
     <link rel="manifest" href="/beam/manifest.webmanifest">
-    <title>Beam — Transfer files using light</title>
-  <link rel="stylesheet" crossorigin href="/beam/assets/style-CFtVpQi2.css">
+    <title>Beam — Light becomes a local network</title>
+  <link rel="stylesheet" crossorigin href="/beam/assets/style-DKMHoLi-.css">
 </head>
 <body>
     <div class="container">
         <h1>Beam</h1>
-        <h2>Transfer files using light.</h2>
+        <h2>Light becomes a local network.</h2>
         <p class="explanation">
-            One screen displays any file as an animated stream of QR codes.
-            Another device points its camera at it and reconstructs the file —
-            byte for byte, name included. No internet, no Bluetooth, no pairing.
+            Broadcast a signed experience to an entire crowd, move files through
+            screens and cameras, or publish an always-on offline beacon. No
+            cellular capacity, account, or central server required.
         </p>
         <div class="action-buttons">
+            <a href="./live/" class="button">Launch Beam Live</a>
+            <a href="./live/audience/" class="button button-secondary">Join a live signal</a>
             <a href="./send/" class="button">Send a file</a>
             <a href="./receive/" class="button">Receive a file</a>
+            <a href="./print/" class="button button-secondary">Print a file packet</a>
+            <a href="./beacon/" class="button button-secondary">Scan a Trail Beacon</a>
         </div>
         <p class="hint footer-hint">Works fully offline once installed. On iPhone: tap Share → Add to Home Screen.</p>
     </div>
     <script>
-        if ("serviceWorker" in navigator) {
+        if ("serviceWorker" in navigator && "production" === "production") {
             navigator.serviceWorker.register("/beam/sw.js").catch(function () {});
         }
     </script>

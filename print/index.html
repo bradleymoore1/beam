@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#0a0a0f" />
+    <meta name="description" content="Beam Paper — turn a small file into durable, scan-any-order QR sheets." />
+    <link rel="icon" type="image/png" href="../icon-192x192.png" />
+    <link rel="apple-touch-icon" href="../icon-180x180.png" />
+    <link rel="manifest" href="/beam/manifest.webmanifest" />
+    <title>Beam — Print packet</title>
+    <script type="module" crossorigin src="/beam/assets/print-DgozHz89.js"></script>
+    <link rel="modulepreload" crossorigin href="/beam/assets/modulepreload-polyfill-B5Qt9EMX.js">
+    <link rel="modulepreload" crossorigin href="/beam/assets/browser-BeMEBtOm.js">
+    <link rel="modulepreload" crossorigin href="/beam/assets/fountain-Bcvdx_52.js">
+    <link rel="stylesheet" crossorigin href="/beam/assets/style-DKMHoLi-.css">
+  </head>
+  <body class="paper-builder-page">
+    <a href="../" class="back-link no-print">← Home</a>
+    <main class="paper-builder-shell no-print">
+      <div class="scanner-kicker">Beam durable transport</div>
+      <h1>Beam <small>Paper</small></h1>
+      <h2>Print a file that survives offline.</h2>
+      <p class="paper-lead">Create fountain-coded QR sheets. Scan the codes in any order; duplicates and several damaged codes are harmless.</p>
+
+      <label class="dropzone paper-dropzone" id="dropzone" tabindex="0">
+        <input type="file" id="file-input" hidden />
+        <span class="icon">▦</span>
+        <p>Choose a file for paper transfer</p>
+        <span class="hint">Reliable and dense layouts · files up to 3 MB</span>
+      </label>
+
+      <section class="paper-summary" id="paper-summary" hidden>
+        <div class="paper-file-row">
+          <div>
+            <div class="paper-name" id="paper-name">—</div>
+            <div class="paper-hash" id="paper-hash">—</div>
+          </div>
+          <button class="paper-change button-secondary" id="change-file" type="button">Change</button>
+        </div>
+        <div class="paper-estimates">
+          <div><strong id="estimate-size">—</strong><span>file size</span></div>
+          <div><strong id="estimate-codes">—</strong><span>QR packets</span></div>
+          <div><strong id="estimate-pages">—</strong><span>letter pages</span></div>
+          <div><strong id="estimate-recovery">—</strong><span>extra packets</span></div>
+        </div>
+        <label class="paper-option">Page density
+          <select id="print-profile">
+            <option value="reliable">12/page · reliable · ECC Q</option>
+            <option value="dense" selected>20/page · dense · ECC M</option>
+          </select>
+        </label>
+        <p class="paper-profile-hint" id="profile-hint"></p>
+        <label class="paper-option">Redundancy
+          <select id="redundancy">
+            <option value="20">20% · compact</option>
+            <option value="35" selected>35% · recommended</option>
+            <option value="50">50% · harsh conditions</option>
+          </select>
+        </label>
+        <p class="paper-warning" id="paper-warning" hidden></p>
+        <button class="button paper-generate" id="generate" type="button">Generate printable packet</button>
+      </section>
+    </main>
+
+    <section class="paper-output" id="paper-output" hidden>
+      <div class="paper-toolbar no-print">
+        <div><strong id="output-title">Beam Paper packet</strong><span id="output-meta"></span></div>
+        <button class="button" id="print-now" type="button">Print sheets</button>
+        <button class="button button-secondary" id="start-over" type="button">Start over</button>
+      </div>
+      <div id="paper-pages"></div>
+    </section>
+
+    <script>
+      if ("serviceWorker" in navigator && "production" === "production") {
+        navigator.serviceWorker.register("/beam/sw.js").catch(function () {});
+      }
+    </script>
+  </body>
+</html>
