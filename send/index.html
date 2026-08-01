@@ -13,7 +13,7 @@
     <link rel="apple-touch-icon" href="../icon-180x180.png" />
     <link rel="manifest" href="/beam/manifest.webmanifest" />
     <title>Beam — Send</title>
-    <script type="module" crossorigin src="/beam/assets/send-Bqrt_8jk.js"></script>
+    <script type="module" crossorigin src="/beam/assets/send-W3xluhPu.js"></script>
     <link rel="modulepreload" crossorigin href="/beam/assets/modulepreload-polyfill-B5Qt9EMX.js">
     <link rel="modulepreload" crossorigin href="/beam/assets/fountain-BcdJQL9e.js">
     <link rel="stylesheet" crossorigin href="/beam/assets/style-Ra6qwVpd.css">
@@ -38,8 +38,8 @@
         <label>
           transport
           <select id="cfg-mode">
-            <option value="binary" selected>binary tiles · fastest</option>
-            <option value="mono">standard QR · compatible</option>
+            <option value="mono" selected>standard QR · reliable</option>
+            <option value="binary">binary tiles · experimental</option>
           </select>
         </label>
         <label>
@@ -57,8 +57,8 @@
           <select id="cfg-fps">
             <option>10</option>
             <option>15</option>
-            <option selected>20</option>
-            <option>24</option>
+            <option>20</option>
+            <option selected>24</option>
             <option>30</option>
             <option>60</option>
           </select>
@@ -77,9 +77,9 @@
         <label>
           error correction
           <select id="cfg-ecc">
-            <option selected>L</option>
+            <option>L</option>
             <option>M</option>
-            <option>Q</option>
+            <option selected>Q</option>
             <option>H</option>
           </select>
         </label>
