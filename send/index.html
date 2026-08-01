@@ -13,7 +13,7 @@
     <link rel="apple-touch-icon" href="../icon-180x180.png" />
     <link rel="manifest" href="/beam/manifest.webmanifest" />
     <title>Beam — Send</title>
-    <script type="module" crossorigin src="/beam/assets/send-DNsNor5A.js"></script>
+    <script type="module" crossorigin src="/beam/assets/send-Bqrt_8jk.js"></script>
     <link rel="modulepreload" crossorigin href="/beam/assets/modulepreload-polyfill-B5Qt9EMX.js">
     <link rel="modulepreload" crossorigin href="/beam/assets/fountain-BcdJQL9e.js">
     <link rel="stylesheet" crossorigin href="/beam/assets/style-Ra6qwVpd.css">
@@ -38,8 +38,18 @@
         <label>
           transport
           <select id="cfg-mode">
-                <option value="binary" selected>binary tiles · fastest on large screens</option>
+            <option value="binary" selected>binary tiles · fastest</option>
             <option value="mono">standard QR · compatible</option>
+          </select>
+        </label>
+        <label>
+          density
+          <select id="cfg-density">
+            <option value="auto" selected>auto for screen</option>
+            <option value="176">176×176 · phone</option>
+            <option value="256">256×256 · laptop</option>
+            <option value="352">352×352 · TV</option>
+            <option value="512">512×512 · 4K experimental</option>
           </select>
         </label>
         <label>
@@ -75,7 +85,7 @@
         </label>
         <label>
           display size
-          <input id="cfg-size" type="range" min="300" max="1200" step="50" value="900" />
+          <input id="cfg-size" type="range" min="300" max="2200" step="50" value="2200" />
         </label>
       </div>
       <div class="hint" id="tuning-hint" style="text-align: left; padding-top: 8px">
