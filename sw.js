@@ -1,13 +1,13 @@
 // Beam service worker — offline-first, hand-written, no workbox.
 //
-// Install precaches the app shell (all three pages). Every other GET is
+// Install precaches the app shell. Every other GET is
 // cache-first with a runtime cache fallback, so the first online visit
 // warms everything and the app then runs forever in airplane mode.
 
 // Bump this when the app shell changes. Hashed Vite assets are filled into
 // this cache at runtime after the new shell is installed.
-const CACHE = "beam-v11";
-const SHELL = ["./", "./index.html", "./send/", "./receive/", "./beacon/"];
+const CACHE = "beam-v12";
+const SHELL = ["./", "./index.html", "./send/", "./receive/", "./print/", "./beacon/"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(

@@ -13,11 +13,11 @@
     <link rel="apple-touch-icon" href="../icon-180x180.png" />
     <link rel="manifest" href="/beam/manifest.webmanifest" />
     <title>Beam — Receive</title>
-    <script type="module" crossorigin src="/beam/assets/receive-ClwBR9R1.js"></script>
+    <script type="module" crossorigin src="/beam/assets/receive-DJ2-USbZ.js"></script>
     <link rel="modulepreload" crossorigin href="/beam/assets/modulepreload-polyfill-B5Qt9EMX.js">
-    <link rel="modulepreload" crossorigin href="/beam/assets/fountain-BcdJQL9e.js">
+    <link rel="modulepreload" crossorigin href="/beam/assets/fountain-Bcvdx_52.js">
     <link rel="modulepreload" crossorigin href="/beam/assets/camera-zoom-CL_BUgAo.js">
-    <link rel="stylesheet" crossorigin href="/beam/assets/style-Ra6qwVpd.css">
+    <link rel="stylesheet" crossorigin href="/beam/assets/style-BWISHvSy.css">
   </head>
   <body class="scanner-page">
     <a href="../" class="back-link">← Home</a>
@@ -25,6 +25,14 @@
     <div class="scanner-kicker">Beam optical receiver</div>
     <h1>Beam</h1>
     <h2>Receive a file</h2>
+
+    <label class="scan-profile">
+      <span><strong>Scan source</strong><small>Optimize decoding for the carrier in front of you.</small></span>
+      <select id="cfg-source">
+        <option value="screen" selected>Live screen</option>
+        <option value="paper">Printed sheets</option>
+      </select>
+    </label>
 
     <div class="hint" id="stats">point the camera at the sender's code</div>
 
