@@ -119,7 +119,7 @@ the camera starts.
 |---|---|---|
 | channel | binary tiles | fastest on a TV, laptop, tablet, or large phone; standard QR is the compatibility fallback |
 | tx fps | 20 | avoids display/camera refresh aliasing; increase only when the receiver proves it can decode every exposure |
-| bytes / frame | automatic | binary mode fills the fixed 176×176 field; QR mode exposes conservative payload profiles |
+| bytes / frame | automatic | binary mode selects 176², 256², or 352² from screen size; 512² is available manually for 4K |
 
 The parent experiment's measured ceiling with this exact architecture plus
 denser frames, a 120 fps ProMotion sender, and stacked codes: ~128 KB/s
@@ -128,10 +128,19 @@ handheld, ~186 KB/s propped.
 ### Binary tile video
 
 The fast mode removes the full-frame QR carrier. Four small Version 1 QR
-symbols remain at the corners only to give ZXing reliable frame geometry. The
-rest of the 176×176 field carries one hard black/white bit per tile, including
-repeated calibration cells. The receiver perspective-corrects the field from
-the four locators and derives its luminance threshold from the captured frame.
+symbols remain at the corners only to give the receiver reliable frame
+geometry. The field scales through 176², 256², 352², and 512² profiles,
+carrying one hard black/white bit per tile plus repeated calibration cells.
+The profile is encoded in every locator. After the first lock, workers reuse
+the geometry and skip full-frame QR discovery until motion or an integrity
+failure forces reacquisition.
+
+Raw frame capacities are 3,266, 7,506, 14,706, and 31,826 bytes respectively.
+At 20 displayed frames per second their optical ceilings are about 65 KB/s,
+150 KB/s, 294 KB/s, and 637 KB/s before fountain overhead and dropped frames.
+The 512 profile needs a 4K-class sender and 1920-wide or better camera capture;
+it is manual because the default 1280-wide phone capture does not resolve it
+reliably.
 
 This deliberately chooses fewer states with much wider signal margins. A
 camera must distinguish each state under autofocus, motion blur, exposure,

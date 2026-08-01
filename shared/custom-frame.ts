@@ -5,8 +5,9 @@ import { fnv1a } from "./protocol";
 // are locators only; the rest is a raw black/white field. Binary survives
 // camera demosaicing, white balance, compression, and imperfect focus much
 // better than the retired RGB carrier while reclaiming QR's format overhead.
-export const CUSTOM_LOCATOR_TEXT = "BMB1";
-export const CUSTOM_GRID_SIZE = 176;
+export const CUSTOM_GRID_SIZES = [176, 256, 352, 512] as const;
+export type CustomGridSize = (typeof CUSTOM_GRID_SIZES)[number];
+export const CUSTOM_DEFAULT_GRID_SIZE: CustomGridSize = 176;
 export const CUSTOM_OUTER_MARGIN = 4;
 export const CUSTOM_BINARY_SYMBOL_BITS = 1;
 export const CUSTOM_SYMBOL_COUNT = 2;
@@ -16,8 +17,6 @@ export const CUSTOM_LOCATOR_SIZE = 21;
 export const CUSTOM_LOCATOR_QUIET = 4;
 export const CUSTOM_LOCATOR_TOTAL = CUSTOM_LOCATOR_SIZE + CUSTOM_LOCATOR_QUIET * 2;
 export const CUSTOM_LOCATOR_INSET = 6;
-export const CUSTOM_CALIBRATION_X = Math.floor(CUSTOM_GRID_SIZE / 2) - CUSTOM_SYMBOL_COUNT / 2;
-export const CUSTOM_CALIBRATION_Y = Math.floor(CUSTOM_GRID_SIZE / 2);
 export const CUSTOM_CALIBRATION_COPIES = 4;
 
 const MAGIC0 = 0xb3;
@@ -66,33 +65,41 @@ export type CustomLocator = {
   centerY: number;
 };
 
-let cachedLayout: CustomLayout | null = null;
+const cachedLayouts = new Map<number, CustomLayout>();
 
-function setReserved(layout: Uint8Array, x: number, y: number): void {
-  if (x < 0 || y < 0 || x >= CUSTOM_GRID_SIZE || y >= CUSTOM_GRID_SIZE) return;
-  layout[y * CUSTOM_GRID_SIZE + x] = 1;
+function locatorText(size: number): string {
+  return `B${size}`;
 }
 
-export function createCustomLayout(): CustomLayout {
-  if (cachedLayout) return cachedLayout;
+function setReserved(layout: Uint8Array, size: number, x: number, y: number): void {
+  if (x < 0 || y < 0 || x >= size || y >= size) return;
+  layout[y * size + x] = 1;
+}
+
+export function createCustomLayout(size: number = CUSTOM_DEFAULT_GRID_SIZE): CustomLayout {
+  if (!(CUSTOM_GRID_SIZES as readonly number[]).includes(size)) {
+    throw new Error(`unsupported binary grid ${size}`);
+  }
+  const cached = cachedLayouts.get(size);
+  if (cached) return cached;
 
   const locator = QRCode.create(
-    [{ data: new TextEncoder().encode(CUSTOM_LOCATOR_TEXT), mode: "byte" }],
+    [{ data: new TextEncoder().encode(locatorText(size)), mode: "byte" }],
     { version: CUSTOM_LOCATOR_VERSION, errorCorrectionLevel: "H", maskPattern: 4 },
   );
-  const reserved = new Uint8Array(CUSTOM_GRID_SIZE * CUSTOM_GRID_SIZE);
-  const locatorCellIndex = new Int32Array(CUSTOM_GRID_SIZE * CUSTOM_GRID_SIZE);
+  const reserved = new Uint8Array(size * size);
+  const locatorCellIndex = new Int32Array(size * size);
   locatorCellIndex.fill(-1);
 
-  for (let row = 0; row < CUSTOM_GRID_SIZE; row++) {
-    for (let column = 0; column < CUSTOM_GRID_SIZE; column++) {
+  for (let row = 0; row < size; row++) {
+    for (let column = 0; column < size; column++) {
       if (
         row < BORDER_CELLS ||
         column < BORDER_CELLS ||
-        row >= CUSTOM_GRID_SIZE - BORDER_CELLS ||
-        column >= CUSTOM_GRID_SIZE - BORDER_CELLS
+        row >= size - BORDER_CELLS ||
+        column >= size - BORDER_CELLS
       ) {
-        setReserved(reserved, column, row);
+        setReserved(reserved, size, column, row);
       }
     }
   }
@@ -100,16 +107,16 @@ export function createCustomLayout(): CustomLayout {
   const locatorOrigins = [
     { x: CUSTOM_LOCATOR_INSET, y: CUSTOM_LOCATOR_INSET },
     {
-      x: CUSTOM_GRID_SIZE - CUSTOM_LOCATOR_INSET - CUSTOM_LOCATOR_TOTAL,
+      x: size - CUSTOM_LOCATOR_INSET - CUSTOM_LOCATOR_TOTAL,
       y: CUSTOM_LOCATOR_INSET,
     },
     {
       x: CUSTOM_LOCATOR_INSET,
-      y: CUSTOM_GRID_SIZE - CUSTOM_LOCATOR_INSET - CUSTOM_LOCATOR_TOTAL,
+      y: size - CUSTOM_LOCATOR_INSET - CUSTOM_LOCATOR_TOTAL,
     },
     {
-      x: CUSTOM_GRID_SIZE - CUSTOM_LOCATOR_INSET - CUSTOM_LOCATOR_TOTAL,
-      y: CUSTOM_GRID_SIZE - CUSTOM_LOCATOR_INSET - CUSTOM_LOCATOR_TOTAL,
+      x: size - CUSTOM_LOCATOR_INSET - CUSTOM_LOCATOR_TOTAL,
+      y: size - CUSTOM_LOCATOR_INSET - CUSTOM_LOCATOR_TOTAL,
     },
   ];
   const locators = locatorOrigins.map(({ x, y }) => ({
@@ -125,7 +132,7 @@ export function createCustomLayout(): CustomLayout {
       for (let column = 0; column < CUSTOM_LOCATOR_TOTAL; column++) {
         const x = locator.x + column;
         const y = locator.y + row;
-        setReserved(reserved, x, y);
+        setReserved(reserved, size, x, y);
         const qrColumn = column - CUSTOM_LOCATOR_QUIET;
         const qrRow = row - CUSTOM_LOCATOR_QUIET;
         if (
@@ -134,7 +141,7 @@ export function createCustomLayout(): CustomLayout {
           qrRow >= 0 &&
           qrRow < CUSTOM_LOCATOR_SIZE
         ) {
-          locatorCellIndex[y * CUSTOM_GRID_SIZE + x] = qrRow * CUSTOM_LOCATOR_SIZE + qrColumn;
+          locatorCellIndex[y * size + x] = qrRow * CUSTOM_LOCATOR_SIZE + qrColumn;
         }
       }
     }
@@ -142,14 +149,16 @@ export function createCustomLayout(): CustomLayout {
 
   const calibrationPositions: number[] = [];
   const calibrationSymbols: number[] = [];
-  const calibrationIndex = new Uint8Array(CUSTOM_GRID_SIZE * CUSTOM_GRID_SIZE);
+  const calibrationIndex = new Uint8Array(size * size);
   calibrationIndex.fill(0xff);
+  const calibrationX = Math.floor(size / 2) - CUSTOM_SYMBOL_COUNT / 2;
+  const calibrationY = Math.floor(size / 2);
   for (let copy = 0; copy < CUSTOM_CALIBRATION_COPIES; copy++) {
     for (let symbol = 0; symbol < CUSTOM_SYMBOL_COUNT; symbol++) {
-      const x = CUSTOM_CALIBRATION_X + symbol;
-      const y = CUSTOM_CALIBRATION_Y + copy;
-      const position = y * CUSTOM_GRID_SIZE + x;
-      setReserved(reserved, x, y);
+      const x = calibrationX + symbol;
+      const y = calibrationY + copy;
+      const position = y * size + x;
+      setReserved(reserved, size, x, y);
       calibrationIndex[position] = calibrationPositions.length;
       calibrationPositions.push(position);
       calibrationSymbols.push(symbol);
@@ -159,11 +168,11 @@ export function createCustomLayout(): CustomLayout {
   const dataPositions: number[] = [];
   const dataRows: number[] = [];
   const dataColumns: number[] = [];
-  const positionIndex = new Uint32Array(CUSTOM_GRID_SIZE * CUSTOM_GRID_SIZE);
+  const positionIndex = new Uint32Array(size * size);
   positionIndex.fill(0xffffffff);
-  for (let row = 0; row < CUSTOM_GRID_SIZE; row++) {
-    for (let column = 0; column < CUSTOM_GRID_SIZE; column++) {
-      const position = row * CUSTOM_GRID_SIZE + column;
+  for (let row = 0; row < size; row++) {
+    for (let column = 0; column < size; column++) {
+      const position = row * size + column;
       if (reserved[position]) continue;
       positionIndex[position] = dataPositions.length;
       dataPositions.push(position);
@@ -173,7 +182,7 @@ export function createCustomLayout(): CustomLayout {
   }
 
   const layout: CustomLayout = {
-    size: CUSTOM_GRID_SIZE,
+    size,
     dataPositions: Uint32Array.from(dataPositions),
     dataRows: Uint16Array.from(dataRows),
     dataColumns: Uint16Array.from(dataColumns),
@@ -184,13 +193,13 @@ export function createCustomLayout(): CustomLayout {
     locators,
     calibrationPositions: Uint32Array.from(calibrationPositions),
     calibrationRows: Uint16Array.from(calibrationPositions, (position) =>
-      Math.floor(position / CUSTOM_GRID_SIZE)),
+      Math.floor(position / size)),
     calibrationColumns: Uint16Array.from(calibrationPositions, (position) =>
-      position % CUSTOM_GRID_SIZE),
+      position % size),
     calibrationIndex,
     calibrationSymbols: Uint8Array.from(calibrationSymbols),
   };
-  cachedLayout = layout;
+  cachedLayouts.set(size, layout);
   return layout;
 }
 
@@ -287,8 +296,17 @@ export function decodeCustomEnvelope(symbols: Uint8Array, symbolBits: number): U
   return header.symbolBits === symbolBits && fnv1a(raw) === header.rawFnv ? raw : null;
 }
 
+export function customGridSizeFromLocator(bytes: Uint8Array): number | null {
+  const text = new TextDecoder().decode(bytes);
+  if (text === "BMB1") return CUSTOM_DEFAULT_GRID_SIZE;
+  const match = /^B(\d{3})$/.exec(text);
+  if (!match) return null;
+  const size = Number(match[1]);
+  return (CUSTOM_GRID_SIZES as readonly number[]).includes(size) ? size : null;
+}
+
 export function isCustomLocator(bytes: Uint8Array): boolean {
-  return new TextDecoder().decode(bytes) === CUSTOM_LOCATOR_TEXT;
+  return customGridSizeFromLocator(bytes) !== null;
 }
 
 function lerp(a: CustomPoint, b: CustomPoint, amount: number): CustomPoint {

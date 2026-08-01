@@ -10,7 +10,8 @@ import {
 } from "../shared/protocol";
 import {
   CUSTOM_BINARY_SYMBOL_BITS,
-  CUSTOM_GRID_SIZE,
+  CUSTOM_DEFAULT_GRID_SIZE,
+  CUSTOM_GRID_SIZES,
   CUSTOM_HEADER_LEN,
   createCustomEnvelope,
   createCustomLayout,
@@ -29,6 +30,7 @@ const stage = document.getElementById("stage")!;
 const canvas = document.getElementById("qr") as HTMLCanvasElement;
 const specs = document.getElementById("specs")!;
 const cfgMode = document.getElementById("cfg-mode") as HTMLSelectElement;
+const cfgDensity = document.getElementById("cfg-density") as HTMLSelectElement;
 const cfgFps = document.getElementById("cfg-fps") as HTMLSelectElement;
 const cfgBytes = document.getElementById("cfg-bytes") as HTMLSelectElement;
 const cfgEcc = document.getElementById("cfg-ecc") as HTMLSelectElement;
@@ -42,10 +44,6 @@ const MAX_FRAME_BYTES_BY_ECC = {
   H: 1000,
 } as const;
 
-const CUSTOM_LAYOUT = createCustomLayout();
-const CUSTOM_BINARY_RAW_FRAME_BYTES =
-  customCapacityForBits(CUSTOM_LAYOUT, CUSTOM_BINARY_SYMBOL_BITS) - CUSTOM_HEADER_LEN;
-
 type WakeLock = { release: () => Promise<void> };
 let wakeLock: WakeLock | null = null;
 
@@ -55,7 +53,7 @@ let currentFileName = "";
 
 async function main() {
   syncTuningOptions();
-  for (const el of [cfgMode, cfgFps, cfgBytes, cfgEcc, cfgSize]) {
+  for (const el of [cfgMode, cfgDensity, cfgFps, cfgBytes, cfgEcc, cfgSize]) {
     el.addEventListener("change", () => {
       syncTuningOptions();
       if (currentPayload) {
@@ -129,11 +127,14 @@ async function startStream(payload: Uint8Array) {
   const gen = ++generation;
   const mode = cfgMode.value as "mono" | "binary";
   const txFps = Number(cfgFps.value);
-  const frameBytes = mode === "binary"
-    ? CUSTOM_BINARY_RAW_FRAME_BYTES
-    : Number(cfgBytes.value);
   const ecc = cfgEcc.value as "L" | "M" | "Q" | "H";
   const displayPx = Number(cfgSize.value);
+  const customLayout = mode === "binary"
+    ? createCustomLayout(selectGridSize(displayPx))
+    : null;
+  const frameBytes = customLayout
+    ? customCapacityForBits(customLayout, CUSTOM_BINARY_SYMBOL_BITS) - CUSTOM_HEADER_LEN
+    : Number(cfgBytes.value);
 
   const random = new Uint32Array(1);
   crypto.getRandomValues(random);
@@ -163,7 +164,6 @@ async function startStream(payload: Uint8Array) {
   const queue: ImageData[] = [];
   let nextSeq = 0;
   let pumpScheduled = false;
-  const customLayout = mode === "binary" ? CUSTOM_LAYOUT : null;
   const customBits = CUSTOM_BINARY_SYMBOL_BITS;
 
   const sizeCanvas = () => {
@@ -186,12 +186,12 @@ async function startStream(payload: Uint8Array) {
     if (CUSTOM_HEADER_LEN + frameBytes > capacity) {
       throw new Error(`tile carrier holds ${capacity - CUSTOM_HEADER_LEN} raw bytes/frame`);
     }
-    modules = CUSTOM_GRID_SIZE;
+    modules = customLayout.size;
     sizeCanvas();
     specs.textContent =
       `${currentFileName} (${Math.round(payload.length / 1024)} KB) · ` +
       `${txFps} FPS · ${frameBytes} bytes/frame · binary tiles · ` +
-      `${CUSTOM_GRID_SIZE}×${CUSTOM_GRID_SIZE} · K=${encoder.k}`;
+      `${customLayout.size}×${customLayout.size} · K=${encoder.k}`;
   }
 
   const makeFrame = (): ImageData => {
@@ -200,7 +200,7 @@ async function startStream(payload: Uint8Array) {
     if (customLayout) {
       const envelope = createCustomEnvelope(bytes, customBits);
       const padSeed = fnv1a(envelope);
-      const total = CUSTOM_GRID_SIZE + 2 * MARGIN;
+      const total = customLayout.size + 2 * MARGIN;
       const img = new ImageData(total, total);
       const pixels = new Uint32Array(img.data.buffer);
       pixels.fill(0xffffffff);
@@ -321,6 +321,7 @@ async function startStream(payload: Uint8Array) {
 
 function syncTuningOptions() {
   const binary = cfgMode.value === "binary";
+  cfgDensity.disabled = !binary;
   cfgBytes.disabled = binary;
   cfgEcc.disabled = binary;
   const ecc = cfgEcc.value as keyof typeof MAX_FRAME_BYTES_BY_ECC;
@@ -340,9 +341,23 @@ function syncTuningOptions() {
     const optionEcc = option.value as keyof typeof MAX_FRAME_BYTES_BY_ECC;
     option.disabled = MAX_FRAME_BYTES_BY_ECC[optionEcc] < frameBytes;
   }
+  const selectedSize = selectGridSize(Number(cfgSize.value));
+  const selectedLayout = createCustomLayout(selectedSize);
+  const selectedBytes = customCapacityForBits(selectedLayout, CUSTOM_BINARY_SYMBOL_BITS) - CUSTOM_HEADER_LEN;
   tuningHint.textContent = binary
-    ? `High-throughput binary field: ${CUSTOM_GRID_SIZE}×${CUSTOM_GRID_SIZE}, ${CUSTOM_BINARY_RAW_FRAME_BYTES} raw bytes/frame. Four small QR codes are locators only. Use a large, bright screen and the Beam receiver.`
+    ? `Binary ${selectedSize}×${selectedSize}: ${selectedBytes.toLocaleString()} raw bytes/frame. Auto scales from phone to TV; 512 is manual for 4K plus 1920+ camera capture.`
     : `Standard monochrome QR compatibility mode. For ECC ${ecc}, the maximum profile is ${maxBytes} bytes/frame.`;
+}
+
+function selectGridSize(displayPx: number): number {
+  const requested = cfgDensity.value;
+  if (requested !== "auto") return Number(requested);
+  const cssBudget = Math.min(0.9 * Math.min(window.innerWidth, window.innerHeight), displayPx);
+  // Auto stays conservative enough for the receiver's default 1280-wide
+  // camera mode. The 512 profile is manual because it needs 1920+ capture.
+  const candidates = CUSTOM_GRID_SIZES.filter((size) => size <= 352).reverse();
+  return candidates.find((size) => cssBudget / (size + 2 * MARGIN) >= 3.2)
+    ?? CUSTOM_DEFAULT_GRID_SIZE;
 }
 
 function showStreamError(err: unknown) {

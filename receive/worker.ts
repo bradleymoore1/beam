@@ -6,7 +6,12 @@
 import wasmUrl from "zxing-wasm/reader/zxing_reader.wasm?url";
 import { prepareZXingModule, readBarcodes } from "zxing-wasm/reader";
 import { decodeBeaconFrameText } from "../shared/beacon-frame";
-import { decodeCustomImage, isCustomLocator } from "../shared/custom-frame";
+import {
+  createCustomLayout,
+  customGridSizeFromLocator,
+  decodeCustomImage,
+  type CustomPosition,
+} from "../shared/custom-frame";
 
 prepareZXingModule({
   overrides: {
@@ -20,10 +25,27 @@ const ctx = self as unknown as {
   postMessage(msg: unknown, transfer?: Transferable[]): void;
 };
 
+let trackedCustom: { size: number; positions: CustomPosition[] } | null = null;
+
 ctx.onmessage = async (e: MessageEvent) => {
   const { id, buf, w, h } = e.data as { id: number; buf: ArrayBuffer; w: number; h: number };
   try {
     const img = new ImageData(new Uint8ClampedArray(buf), w, h);
+    // Once a binary field is locked, its four locator positions are stable
+    // across frames. Decode directly and only pay ZXing's full-frame search
+    // again after motion, focus loss, or an integrity failure.
+    if (trackedCustom) {
+      const trackedBytes = decodeCustomImage(
+        img,
+        trackedCustom.positions,
+        createCustomLayout(trackedCustom.size),
+      );
+      if (trackedBytes) {
+        ctx.postMessage({ id, bytes: trackedBytes }, [trackedBytes.buffer]);
+        return;
+      }
+      trackedCustom = null;
+    }
     const results = await readBarcodes(img, {
       formats: ["QRCode"],
       maxNumberOfSymbols: 4,
@@ -36,11 +58,16 @@ ctx.onmessage = async (e: MessageEvent) => {
       ctx.postMessage({ id, bytes: beaconBytes }, [beaconBytes.buffer]);
       return;
     }
-    const customLocators = carriers
-      .filter((x) => isCustomLocator(x.bytes))
-      .map((x) => x.position);
-    if (customLocators.length >= 4) {
-      const bytes = decodeCustomImage(img, customLocators);
+    const customCarriers = carriers
+      .map((result) => ({ result, size: customGridSizeFromLocator(result.bytes) }))
+      .filter((entry) => entry.size !== null);
+    const customSize = customCarriers[0]?.size;
+    const customLocators = customCarriers
+      .filter((entry) => entry.size === customSize)
+      .map((entry) => entry.result.position);
+    if (customSize && customLocators.length >= 4) {
+      trackedCustom = { size: customSize, positions: customLocators };
+      const bytes = decodeCustomImage(img, customLocators, createCustomLayout(customSize));
       ctx.postMessage({ id, bytes });
       return;
     }

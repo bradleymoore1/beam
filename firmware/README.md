@@ -12,7 +12,7 @@ always-on offline library:
 - each successful upload atomically replaces the previous trail file;
 - after an upload, the display shows a standard QR that downloads the latest
   file over the local Wi-Fi link;
-- pressing the physical side button restores that latest-file QR for 30 seconds;
+- pressing the physical side button toggles the latest-file QR on or off;
 - a captive-portal DNS responder makes the library easy to find after joining;
 - files survive normal firmware updates in the filesystem.
 
@@ -63,7 +63,8 @@ public page.
 5. After the upload completes, the display shows a download QR for the latest
    file. Scan it while connected to the hotspot; the payload then moves over
    local 802.11n HTTP with resumable byte ranges instead of through the camera.
-6. Press the side button whenever you want to restore the latest-file QR.
+6. Press the side button to toggle the latest-file QR. It remains visible until
+   the button is pressed again.
 
 The board's captive upload/library page is intentionally standalone, so the
 experience works with a normal phone camera and browser. Beam's separate

@@ -33,6 +33,8 @@
             <option>960</option>
             <option selected>1280</option>
             <option>1920</option>
+            <option>2560</option>
+            <option>3840</option>
           </select>
         </label>
         <label>
@@ -52,9 +54,9 @@
         </label>
       </div>
       <div class="hint" style="text-align: left; padding-top: 8px">
-        Set before starting the camera. 1280-wide is the widest mode iOS runs
-        at a true 60 fps; the fps request is demanded with `exact` first
-        because `ideal: 60` silently delivers 30.
+        Set before starting the camera. 1280-wide is usually the fastest iOS
+        mode; use 1920 or higher for 352/512 TV carriers when the phone offers
+        it. The browser falls back automatically if a requested mode is unavailable.
       </div>
     </details>
 

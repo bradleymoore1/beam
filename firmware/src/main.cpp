@@ -75,8 +75,7 @@ String uploadError;
 
 bool screenDirty = true;
 bool stationWasPresent = false;
-bool latestScreenOverride = false;
-uint32_t latestScreenUntil = 0;
+bool latestScreenActive = false;
 
 uint8_t downloadBuffer[16 * 1024] = {};
 
@@ -361,6 +360,7 @@ void handleUploadData() {
     }
     files[0] = entry;
     fileCount = 1;
+    latestScreenActive = true;
     preferences.putUInt("next-id", nextFileId);
     uploadOk = true;
   } else if (upload.status == UPLOAD_FILE_ABORTED) {
@@ -523,11 +523,11 @@ void updateSideButton(uint32_t now) {
   if (!pressed || now - sideButtonHandledAt < 250) return;
   sideButtonHandledAt = now;
   if (fileCount > 0) {
-    latestScreenOverride = true;
-    latestScreenUntil = now + 30000;
+    latestScreenActive = !latestScreenActive;
     screenDirty = true;
-    Serial.printf("Side button: showing latest file %s\n",
-                  files[fileCount - 1].name.c_str());
+    Serial.printf("Side button: latest file %s (%s)\n",
+                  files[fileCount - 1].name.c_str(),
+                  latestScreenActive ? "shown" : "hidden");
   } else {
     screenDirty = true;
     Serial.println("Side button: no uploaded file yet");
@@ -625,12 +625,10 @@ void drawLatestScreen() {
 }
 
 void drawCurrentScreen() {
-  if (fileCount > 0 && latestScreenOverride) {
+  if (fileCount > 0 && latestScreenActive) {
     drawLatestScreen();
   } else if (WiFi.softAPgetStationNum() == 0) {
     drawJoinScreen();
-  } else if (fileCount > 0) {
-    drawLatestScreen();
   } else {
     drawPortalScreen();
   }
@@ -779,10 +777,6 @@ void loop() {
   server.handleClient();
   updateSideButton(now);
   updateTouch(now);
-  if (latestScreenOverride && static_cast<int32_t>(now - latestScreenUntil) >= 0) {
-    latestScreenOverride = false;
-    screenDirty = true;
-  }
   const bool stationPresent = WiFi.softAPgetStationNum() > 0;
   if (stationPresent != stationWasPresent) {
     stationWasPresent = stationPresent;
