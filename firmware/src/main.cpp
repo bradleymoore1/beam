@@ -5,6 +5,7 @@
 #include <Preferences.h>
 #include <WebServer.h>
 #include <WiFi.h>
+#include <esp_system.h>
 #include <qrcode.h>
 #include <vector>
 
@@ -37,7 +38,10 @@ constexpr uint16_t DARK_RGB[4] = {0x1083, 0x4003, 0x0204, 0x10AA};
 
 constexpr size_t MAX_FILES = 8;
 constexpr size_t MAX_FILE_BYTES = 8 * 1024 * 1024;
+constexpr uint8_t STORAGE_LAYOUT_VERSION = 2;
 constexpr char MANIFEST_PATH[] = "/manifest.tsv";
+constexpr char MANIFEST_TEMP_PATH[] = "/manifest.new";
+constexpr char MANIFEST_BACKUP_PATH[] = "/manifest.bak";
 constexpr char TEMP_PATH[] = "/upload.tmp";
 constexpr char PLAYBACK_PREFIX[] = "BEAM-FRAME-1:";
 constexpr size_t FRAME_HEADER_LEN = 120;
@@ -95,9 +99,12 @@ uint16_t playbackSessionId = 0;
 uint32_t playbackSeq = 0;
 uint32_t playbackNextAt = 0;
 bool playbackActive = false;
-std::vector<double> playbackCdf;
 std::vector<uint32_t> playbackIndices;
 std::vector<uint32_t> playbackScratch;
+double playbackDistributionTotal = 1.0;
+double playbackR = 1.0;
+uint32_t playbackSpike = 1;
+uint32_t pendingPlaybackId = 0;
 uint8_t playbackSource[PLAYBACK_BLOCK_LEN] = {};
 uint8_t playbackBlock[PLAYBACK_BLOCK_LEN] = {};
 uint8_t playbackFrame[PLAYBACK_BINARY_LEN] = {};
@@ -120,13 +127,10 @@ struct TouchState {
 TouchState touch;
 bool touchReady = false;
 
-struct ButtonState {
-  bool rawPressed = false;
-  bool stablePressed = false;
-  uint32_t changedAt = 0;
-};
+volatile bool sideButtonEvent = false;
+uint32_t sideButtonHandledAt = 0;
 
-ButtonState sideButton;
+void IRAM_ATTR onSideButtonPress() { sideButtonEvent = true; }
 
 const char UPLOAD_HTML[] PROGMEM = R"HTML(<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>Trail Beacon · Upload</title>
@@ -135,8 +139,8 @@ const char UPLOAD_HTML[] PROGMEM = R"HTML(<!doctype html>
 </style></head><body><main>
 <div class="eyebrow">Trail Beacon · public upload</div><div class="hero"><div><h1>Pack the trail.</h1><p>Share a map, guide, or any useful file with people nearby.</p></div><div class="eyebrow">LOCAL ONLY</div></div>
 <section class="panel"><h2>Beacon details</h2><p>Anyone connected to this Wi‑Fi can publish a file. There is no internet account or PIN.</p><div class="facts"><div class="fact"><b id="ssid">—</b><span>Wi‑Fi network</span></div><div class="fact"><b id="ip">192.168.4.1</b><span>library address</span></div><div class="fact"><b id="capacity">—</b><span>local storage</span></div></div></section>
-<section class="panel"><h2>Add a trail file</h2><p>The beacon will start looping the uploaded file as QR video frames as soon as publishing finishes.</p><form id="upload"><label class="drop">Choose a PDF, map, image, or any useful file<input id="file" type="file" required></label><button id="uploadButton" type="submit">Publish &amp; start QR broadcast</button></form><div id="uploadStatus" class="status"></div></section>
-<section class="panel"><div class="row" style="justify-content:space-between"><h2>Visitor library</h2><a class="button secondary" href="/browse">Open download page</a></div><div id="files"><p>Loading…</p></div></section>
+<section class="panel"><h2>Publish the latest file</h2><p>A successful upload safely replaces the previous file, then starts its QR broadcast. The side button rebroadcasts it at any time.</p><form id="upload"><label class="drop">Choose a PDF, map, image, or any useful file<input id="file" type="file" required></label><button id="uploadButton" type="submit">Publish &amp; start QR broadcast</button></form><div id="uploadStatus" class="status"></div></section>
+<section class="panel"><div class="row" style="justify-content:space-between"><h2>Current trail file</h2><a class="button secondary" href="/browse">Open download page</a></div><div id="files"><p>Loading…</p></div></section>
 <div class="foot">Files are stored on this beacon. Downloads work directly over its Wi‑Fi, even with no internet service.</div>
 </main><script>
 const $=id=>document.getElementById(id);function fmt(n){if(n<1024)return n+' B';if(n<1048576)return (n/1024).toFixed(1)+' KB';return (n/1048576).toFixed(2)+' MB'}function escapeHtml(s){return s.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
@@ -234,6 +238,30 @@ bool saveManifest() {
   return true;
 }
 
+bool saveLatestManifest(const BeaconFile &entry) {
+  LittleFS.remove(MANIFEST_TEMP_PATH);
+  fs::File file = LittleFS.open(MANIFEST_TEMP_PATH, "w");
+  if (!file) return false;
+  file.print(entry.id);
+  file.print('\t');
+  file.print(entry.size);
+  file.print('\t');
+  file.print(entry.mime);
+  file.print('\t');
+  file.println(entry.name);
+  file.close();
+  LittleFS.remove(MANIFEST_BACKUP_PATH);
+  if (LittleFS.exists(MANIFEST_PATH) &&
+      !LittleFS.rename(MANIFEST_PATH, MANIFEST_BACKUP_PATH)) return false;
+  if (!LittleFS.rename(MANIFEST_TEMP_PATH, MANIFEST_PATH)) {
+    if (LittleFS.exists(MANIFEST_BACKUP_PATH))
+      LittleFS.rename(MANIFEST_BACKUP_PATH, MANIFEST_PATH);
+    return false;
+  }
+  LittleFS.remove(MANIFEST_BACKUP_PATH);
+  return true;
+}
+
 void loadManifest() {
   fileCount = 0;
   if (!LittleFS.exists(MANIFEST_PATH)) return;
@@ -312,38 +340,39 @@ double deterministicLog(double value) {
   return static_cast<double>(exponent) * 0.6931471805599453 + 2.0 * sum;
 }
 
-bool buildPlaybackCdf() {
-  playbackCdf.clear();
-  playbackCdf.reserve(playbackK);
+double playbackDegreeWeight(uint32_t degree) {
+  const double rho = degree == 1
+    ? 1.0 / static_cast<double>(playbackK)
+    : 1.0 / (static_cast<double>(degree) * static_cast<double>(degree - 1));
+  double tau = 0.0;
+  if (degree < playbackSpike) {
+    tau = playbackR / (static_cast<double>(degree) * static_cast<double>(playbackK));
+  } else if (degree == playbackSpike) {
+    tau = (playbackR * max(0.0, deterministicLog(playbackR / 0.5))) /
+      static_cast<double>(playbackK);
+  }
+  return rho + tau;
+}
+
+bool buildPlaybackDistribution() {
   if (playbackK == 1) {
-    playbackCdf.push_back(1.0);
+    playbackR = 1.0;
+    playbackSpike = 1;
+    playbackDistributionTotal = 1.0;
     return true;
   }
   constexpr double solitonC = 0.1;
   constexpr double solitonDelta = 0.5;
   const double root = sqrt(static_cast<double>(playbackK));
-  const double R = max(1.0, solitonC * deterministicLog(
+  playbackR = max(1.0, solitonC * deterministicLog(
       static_cast<double>(playbackK) / solitonDelta) * root);
-  const uint32_t spike = min(
-      playbackK, static_cast<uint32_t>(ceil(static_cast<double>(playbackK) / R)));
+  playbackSpike = min(
+      playbackK, static_cast<uint32_t>(ceil(static_cast<double>(playbackK) / playbackR)));
   double total = 0.0;
-  for (uint32_t degree = 1; degree <= playbackK; ++degree) {
-    const double rho = degree == 1
-      ? 1.0 / static_cast<double>(playbackK)
-      : 1.0 / (static_cast<double>(degree) * static_cast<double>(degree - 1));
-    double tau = 0.0;
-    if (degree < spike) {
-      tau = R / (static_cast<double>(degree) * static_cast<double>(playbackK));
-    } else if (degree == spike) {
-      tau = (R * max(0.0, deterministicLog(R / solitonDelta))) /
-        static_cast<double>(playbackK);
-    }
-    total += rho + tau;
-    playbackCdf.push_back(total);
-  }
+  for (uint32_t degree = 1; degree <= playbackK; ++degree)
+    total += playbackDegreeWeight(degree);
   if (total <= 0.0) return false;
-  for (double &value : playbackCdf) value /= total;
-  playbackCdf.back() = 1.0;
+  playbackDistributionTotal = total;
   return true;
 }
 
@@ -373,16 +402,23 @@ bool choosePlaybackIndices(uint32_t sequence) {
   if (!playbackK) return false;
   PlaybackRng rng{playbackFrameSeed(playbackSessionId, sequence)};
   const double unit = static_cast<double>(rng.next()) * 2.3283064365386963e-10;
-  size_t low = 0;
-  size_t high = playbackCdf.size() - 1;
-  while (low < high) {
-    const size_t middle = (low + high) >> 1;
-    if (playbackCdf[middle] >= unit) high = middle;
-    else low = middle + 1;
+  double cumulative = 0.0;
+  uint32_t degree = playbackK;
+  for (uint32_t candidate = 1; candidate <= playbackK; ++candidate) {
+    cumulative += playbackDegreeWeight(candidate);
+    if (candidate == playbackK || cumulative / playbackDistributionTotal >= unit) {
+      degree = candidate;
+      break;
+    }
   }
-  const uint32_t degree = min(
-      playbackK, static_cast<uint32_t>(low + 1));
   if (degree > (playbackK >> 3)) {
+    const size_t scratchBytes = static_cast<size_t>(playbackK) * sizeof(uint32_t);
+    if (ESP.getMaxAllocHeap() < scratchBytes + 8192) {
+      Serial.printf("Skipping high-degree frame %u (degree=%u, heap=%u)\n",
+                    static_cast<unsigned>(sequence), static_cast<unsigned>(degree),
+                    static_cast<unsigned>(ESP.getFreeHeap()));
+      return false;
+    }
     playbackScratch.resize(playbackK);
     for (uint32_t i = 0; i < playbackK; ++i) playbackScratch[i] = i;
     playbackIndices.reserve(degree);
@@ -419,6 +455,7 @@ uint32_t fileFnv(fs::File &file) {
       hash ^= playbackSource[i];
       hash = static_cast<uint32_t>(hash * 0x01000193u);
     }
+    delay(0);
   }
   file.seek(0);
   return hash;
@@ -492,9 +529,8 @@ bool encodePlaybackFrame() {
 void stopPlayback() {
   playbackActive = false;
   if (playbackFile) playbackFile.close();
-  playbackCdf.clear();
-  playbackIndices.clear();
-  playbackScratch.clear();
+  std::vector<uint32_t>().swap(playbackIndices);
+  std::vector<uint32_t>().swap(playbackScratch);
   playbackName = String();
   playbackFileId = 0;
   playbackSize = 0;
@@ -518,7 +554,7 @@ void startPlayback(uint32_t id) {
   playbackFnv = fileFnv(playbackFile);
   playbackSessionId = static_cast<uint16_t>(esp_random() & 0xffffu);
   if (!playbackSessionId) playbackSessionId = 1;
-  if (!buildPlaybackCdf()) {
+  if (!buildPlaybackDistribution()) {
     Serial.println("Playback fountain distribution could not be allocated");
     stopPlayback();
     return;
@@ -559,15 +595,16 @@ void rejectUpload(const String &reason) {
 void handleUploadData() {
   HTTPUpload &upload = server.upload();
   if (upload.status == UPLOAD_FILE_START) {
+    // Free the playback file and all transient fountain memory before the
+    // WebServer starts buffering a new upload.
+    pendingPlaybackId = 0;
+    stopPlayback();
+    screenDirty = true;
     uploadOk = false;
     uploadRejected = false;
     uploadError = String();
     uploadedBytes = 0;
     uploadId = nextFileId;
-    if (fileCount >= MAX_FILES) {
-      rejectUpload("The beacon library is full");
-      return;
-    }
     uploadName = sanitizeFileName(upload.filename);
     uploadMime = mimeForName(uploadName);
     LittleFS.remove(TEMP_PATH);
@@ -594,19 +631,25 @@ void handleUploadData() {
       rejectUpload("Could not commit the uploaded file");
       return;
     }
-    BeaconFile &entry = files[fileCount++];
+    BeaconFile entry;
     entry.id = uploadId;
     entry.size = uploadedBytes;
     entry.name = uploadName;
     entry.mime = uploadMime;
     nextFileId = uploadId + 1;
-    if (!nextFileId || !saveManifest()) {
+    if (!nextFileId || !saveLatestManifest(entry)) {
       LittleFS.remove(finalPath);
-      --fileCount;
       uploadRejected = true;
       uploadError = "Could not save the file catalog";
       return;
     }
+    // This beacon intentionally keeps one authoritative file. Delete older
+    // payloads only after the new payload and manifest are safely committed.
+    for (size_t index = 0; index < fileCount; ++index) {
+      if (files[index].id != entry.id) LittleFS.remove(filePath(files[index].id));
+    }
+    files[0] = entry;
+    fileCount = 1;
     preferences.putUInt("next-id", nextFileId);
     uploadOk = true;
   } else if (upload.status == UPLOAD_FILE_ABORTED) {
@@ -620,7 +663,9 @@ void handleUploadDone() {
     return;
   }
   screenDirty = true;
-  if (uploadOk) startPlayback(uploadId);
+  // Respond first. Hashing and preparing a multi-megabyte optical stream in
+  // the HTTP callback made phones report a failed upload and could starve AP.
+  pendingPlaybackId = uploadId;
   sendJson(201, String(F("{\"ok\":true,\"name\":\"")) + jsonEscape(uploadName) + F("\"}"));
 }
 
@@ -720,13 +765,20 @@ void updateTouch(uint32_t now) {
 }
 
 void updateSideButton(uint32_t now) {
-  const bool pressed = digitalRead(Board::SIDE_BUTTON) == LOW;
-  if (pressed != sideButton.rawPressed) {
-    sideButton.rawPressed = pressed;
-    sideButton.changedAt = now;
-  }
-  if (pressed != sideButton.stablePressed && now - sideButton.changedAt >= 35) {
-    sideButton.stablePressed = pressed;
+  noInterrupts();
+  const bool pressed = sideButtonEvent;
+  sideButtonEvent = false;
+  interrupts();
+  if (!pressed || now - sideButtonHandledAt < 250) return;
+  sideButtonHandledAt = now;
+  if (fileCount > 0) {
+    pendingPlaybackId = files[fileCount - 1].id;
+    Serial.printf("Side button: latest file %s queued\n",
+                  files[fileCount - 1].name.c_str());
+  } else {
+    stopPlayback();
+    screenDirty = true;
+    Serial.println("Side button: no uploaded file yet");
   }
 }
 
@@ -834,6 +886,7 @@ void drawPortalScreen() {
 void drawPlaybackScreen() {
   display->fillScreen(Color::NIGHT);
   if (!encodePlaybackFrame()) {
+    ++playbackSeq;
     display->fillRoundRect(10, 24, 220, 150, 20, Color::PAPER);
     drawCentered("FRAME ERROR", 80, Color::CORAL, 2);
     display->flush();
@@ -918,6 +971,31 @@ void setupServer() {
   server.begin();
 }
 
+void clearStoredFiles() {
+  stopPlayback();
+  fs::File directory = LittleFS.open("/files");
+  if (directory && directory.isDirectory()) {
+    fs::File entry = directory.openNextFile();
+    while (entry) {
+      const String path = entry.path();
+      entry.close();
+      if (path.length()) LittleFS.remove(path);
+      entry = directory.openNextFile();
+    }
+    directory.close();
+  }
+  LittleFS.remove(TEMP_PATH);
+  LittleFS.remove(MANIFEST_TEMP_PATH);
+  LittleFS.remove(MANIFEST_BACKUP_PATH);
+  LittleFS.remove(MANIFEST_PATH);
+  fileCount = 0;
+  nextFileId = 1;
+  saveManifest();
+  preferences.putUInt("next-id", nextFileId);
+  preferences.putUChar("storage-ver", STORAGE_LAYOUT_VERSION);
+  Serial.println("Storage reset: previous dummy files removed");
+}
+
 void setupStorage() {
   if (!LittleFS.begin(true, "/littlefs", 10, "spiffs")) {
     Serial.println("LittleFS failed");
@@ -925,6 +1003,8 @@ void setupStorage() {
   }
   if (!LittleFS.exists("/files")) LittleFS.mkdir("/files");
   loadManifest();
+  if (preferences.getUChar("storage-ver", 0) != STORAGE_LAYOUT_VERSION)
+    clearStoredFiles();
 }
 
 void setupPreferences() {
@@ -936,6 +1016,7 @@ void setupPreferences() {
 void setup() {
   pinMode(Board::LCD_BL, OUTPUT);
   pinMode(Board::SIDE_BUTTON, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(Board::SIDE_BUTTON), onSideButtonPress, FALLING);
   digitalWrite(Board::LCD_BL, LOW);
   Serial.begin(115200);
   delay(350);
@@ -949,8 +1030,15 @@ void setup() {
   }
   digitalWrite(Board::LCD_BL, HIGH);
 
-  setupStorage();
+  Serial.printf("Reset reason=%d · heap=%u/%u · largest=%u · PSRAM=%u\n",
+                static_cast<int>(esp_reset_reason()),
+                static_cast<unsigned>(ESP.getFreeHeap()),
+                static_cast<unsigned>(ESP.getHeapSize()),
+                static_cast<unsigned>(ESP.getMaxAllocHeap()),
+                static_cast<unsigned>(ESP.getPsramSize()));
+
   setupPreferences();
+  setupStorage();
   setupWifi();
   setupServer();
   screenDirty = true;
@@ -969,6 +1057,14 @@ void loop() {
   server.handleClient();
   updateSideButton(now);
   updateTouch(now);
+  if (pendingPlaybackId) {
+    const uint32_t id = pendingPlaybackId;
+    pendingPlaybackId = 0;
+    startPlayback(id);
+    Serial.printf("Playback prepared · free heap=%u · largest=%u\n",
+                  static_cast<unsigned>(ESP.getFreeHeap()),
+                  static_cast<unsigned>(ESP.getMaxAllocHeap()));
+  }
   const bool stationPresent = WiFi.softAPgetStationNum() > 0;
   if (stationPresent != stationWasPresent) {
     stationWasPresent = stationPresent;

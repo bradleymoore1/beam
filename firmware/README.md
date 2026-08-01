@@ -4,21 +4,24 @@ This is the hardware side of Beam for the Waveshare ESP32-S3 Development Board
 with the onboard 1.69-inch touch LCD. It turns the display into a small,
 always-on offline library:
 
-- the board starts a WPA2 Wi-Fi hotspot;
+- the board starts an open local Wi-Fi hotspot;
 - the screen first shows a standard Wi-Fi QR that phones can scan;
 - after a phone joins, the screen switches to a second QR for the local upload page;
 - visitors land on a local `/browse` library and download published files;
 - the public `/upload` portal accepts files from anyone connected to the hotspot;
+- each successful upload atomically replaces the previous trail file;
 - after an upload, the display loops Beam-compatible QR video frames so a
   receiver can scan the file directly from the screen;
+- pressing the physical side button restarts the newest file's broadcast;
 - a captive-portal DNS responder makes the library easy to find after joining;
 - files survive normal firmware updates in the filesystem.
 
 The board has 16 MB flash and no SD card in this hardware configuration. The
 custom partition gives the app 5 MB and the local LittleFS library about 10.9
-MB. The firmware currently caps each file at 8 MB and keeps eight entries so a
-trail kit stays quick and reliable. A future SD-card hardware revision can
-remove that ceiling without changing the visitor portal contract.
+MB. The firmware currently caps the latest file at 8 MB and keeps one
+published file so storage use and the public experience stay predictable. A
+future SD-card hardware revision can remove that ceiling without changing the
+visitor portal contract.
 
 ## Build
 
@@ -60,6 +63,8 @@ not exposed by the public page.
 5. After the upload completes, the display continuously loops the file as
    Beam-compatible QR video frames. Open the Beam receiver on a phone and
    point its camera at the display to collect the file.
+6. Press the side button whenever you want to restart broadcasting the latest
+   upload from frame one.
 
 The web app includes a companion “Beacon” scanner route so an installed Beam
 app can scan the same Wi-Fi QR and walk a visitor through the join/library
