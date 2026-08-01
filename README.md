@@ -1,5 +1,23 @@
 # Beam: light-powered file transfer and Trail Beacon
 
+## Beam Live: a crowd operating system
+
+Beam Live turns one stage, television, projector, artwork, float, or public
+display into a signed one-to-many local broadcast. The stage studio at
+`/live/` creates festival, conference, emergency, escape-room, generative-art,
+parade, public-assembly, and party experiences. Audience phones receive them
+at `/live/audience/`, verify an ECDSA P-256 signature, synchronize to the
+publisher timestamp, derive private deterministic roles, render coordinated
+color/haptic/art effects, and can optically rebroadcast the exact signed
+packet to another phone.
+
+The reusable protocol lives in `shared/live-protocol.ts`. Event apps can use
+the same packet creation, verification, audience-role, clock, and phase APIs
+without adopting Beam's web UI. Beam Live commands are deliberately compact:
+an event app can preload heavy art and audio, while the stage broadcasts only
+signed state and timing. The web demo also supports an optional audible beat
+as a redundant synchronization cue.
+
 Send a file between two devices using a **screen and a camera**. The fast web
 fast mode displays four ordinary QR codes per video frame; reliable mode uses
 one larger ordinary QR. Beam Paper freezes the same fountain packets into

@@ -312,7 +312,7 @@ export function createCustomEnvelope(
     for (let plane = 0; plane < 8; plane++) {
       const outputBit = plane * codewordCount + codewordIndex;
       const bit = (codeword >> (7 - plane)) & 1;
-      encoded[outputBit >> 3] |= bit << (7 - (outputBit & 7));
+      encoded[outputBit >> 3] = (encoded[outputBit >> 3] ?? 0) | bit << (7 - (outputBit & 7));
     }
   }
   return encoded;
@@ -457,7 +457,7 @@ function decodeHamming84(codeword: number): number {
     ((bits[4]! ^ bits[5]! ^ bits[6]! ^ bits[7]!) << 2);
   const overall = bits[1]! ^ bits[2]! ^ bits[3]! ^ bits[4]! ^
     bits[5]! ^ bits[6]! ^ bits[7]! ^ bits[8]!;
-  if (syndrome && overall) bits[syndrome] ^= 1;
+  if (syndrome && overall) bits[syndrome] = (bits[syndrome] ?? 0) ^ 1;
   else if (syndrome && !overall) return -1;
   return (bits[3]! << 3) | (bits[5]! << 2) | (bits[6]! << 1) | bits[7]!;
 }
@@ -495,7 +495,7 @@ export function decodeCustomEnvelope(symbols: Uint8Array, symbolBits: number): U
     const nibble = decodeHamming84(codeword);
     if (nibble < 0) return null;
     const byteIndex = codewordIndex >> 1;
-    if (codewordIndex & 1) bytes[byteIndex] |= nibble;
+    if (codewordIndex & 1) bytes[byteIndex] = (bytes[byteIndex] ?? 0) | nibble;
     else bytes[byteIndex] = nibble << 4;
   }
   const header = parseCustomHeader(bytes, PROTOCOL_VERSION, CUSTOM_BINARY_SYMBOL_BITS);
@@ -687,18 +687,18 @@ export function decodeCustomImage(
       layout.calibrationRows[index]!,
       layout.calibrationColumns[index]!,
     );
-    levels[symbol] += luminance(sample);
-    paletteRgb[symbol * 3] += sample[0];
-    paletteRgb[symbol * 3 + 1] += sample[1];
-    paletteRgb[symbol * 3 + 2] += sample[2];
+    levels[symbol] = (levels[symbol] ?? 0) + luminance(sample);
+    paletteRgb[symbol * 3] = (paletteRgb[symbol * 3] ?? 0) + sample[0]!;
+    paletteRgb[symbol * 3 + 1] = (paletteRgb[symbol * 3 + 1] ?? 0) + sample[1]!;
+    paletteRgb[symbol * 3 + 2] = (paletteRgb[symbol * 3 + 2] ?? 0) + sample[2]!;
     paletteCounts[symbol] = (paletteCounts[symbol] ?? 0) + 1;
   }
   for (let index = 0; index < layout.symbolCount; index++) {
     const count = paletteCounts[index] || 1;
-    levels[index] /= count;
-    paletteRgb[index * 3] /= count;
-    paletteRgb[index * 3 + 1] /= count;
-    paletteRgb[index * 3 + 2] /= count;
+    levels[index] = (levels[index] ?? 0) / count;
+    paletteRgb[index * 3] = (paletteRgb[index * 3] ?? 0) / count;
+    paletteRgb[index * 3 + 1] = (paletteRgb[index * 3 + 1] ?? 0) / count;
+    paletteRgb[index * 3 + 2] = (paletteRgb[index * 3 + 2] ?? 0) / count;
   }
   const symbols = new Uint8Array(layout.dataPositions.length);
   if (layout.mode === "binary") {

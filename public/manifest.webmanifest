@@ -1,7 +1,7 @@
 {
-  "name": "Beam — Transfer files using light",
+  "name": "Beam — Local signals through light",
   "short_name": "Beam",
-  "description": "Transfer files offline using screens, cameras, and durable printed QR packets",
+  "description": "Broadcast signed crowd experiences and transfer files offline using screens, cameras, local Wi-Fi, and print",
   "theme_color": "#0a0a0f",
   "background_color": "#0a0a0f",
   "display": "standalone",

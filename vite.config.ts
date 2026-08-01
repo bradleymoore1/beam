@@ -28,6 +28,8 @@ export default defineConfig({
         receive: resolve(__dirname, "receive/index.html"),
         beacon: resolve(__dirname, "beacon/index.html"),
         print: resolve(__dirname, "print/index.html"),
+        live: resolve(__dirname, "live/index.html"),
+        liveAudience: resolve(__dirname, "live/audience/index.html"),
       },
     },
   },
