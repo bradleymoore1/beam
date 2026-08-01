@@ -10,6 +10,7 @@
 
 import { LTDecoder } from "../shared/fountain";
 import { fnv1a, parseFrame, type FrameHeader } from "../shared/protocol";
+import { attachCameraZoom, type CameraZoomController } from "../shared/camera-zoom";
 
 const OVERHEAD_EST = 1.18; // expected frames ≈ K × this (robust-soliton ε)
 
@@ -17,6 +18,12 @@ const startBtn = document.getElementById("start") as HTMLButtonElement;
 const video = document.getElementById("video") as HTMLVideoElement;
 const preview = document.getElementById("preview")!;
 const stats = document.getElementById("stats")!;
+const zoomControls = document.getElementById("zoom-controls") as HTMLElement;
+const zoomRange = document.getElementById("zoom-range") as HTMLInputElement;
+const zoomValue = document.getElementById("zoom-value") as HTMLElement;
+const zoomMode = document.getElementById("zoom-mode") as HTMLElement;
+const zoomMinus = document.getElementById("zoom-minus") as HTMLButtonElement;
+const zoomPlus = document.getElementById("zoom-plus") as HTMLButtonElement;
 const progressEl = document.getElementById("progress")!;
 const bar = document.getElementById("bar")!;
 const result = document.getElementById("result")!;
@@ -26,10 +33,18 @@ const metric = (id: string) => document.getElementById(id)!;
 
 let stream: MediaStream | null = null;
 let decoder: LTDecoder | null = null;
+let activeHeader: FrameHeader | null = null;
 let sessionId = 0;
 let startTs = 0;
 let captureGen = 0;
 let done = false;
+let startInFlight = false;
+let statsTimer: number | null = null;
+let resultUrl: string | null = null;
+let cameraZoom: CameraZoomController | null = null;
+
+type WakeLock = { release: () => Promise<void> };
+let wakeLock: WakeLock | null = null;
 
 const workers: Worker[] = [];
 const busy: boolean[] = [];
@@ -39,6 +54,7 @@ const decodeTimes: number[] = [];
 startBtn.onclick = () => void start();
 
 async function start() {
+  if (startInFlight || stream) return;
   if (!navigator.mediaDevices?.getUserMedia) {
     // On insecure origins the API doesn't exist AT ALL. The camera requires
     // a secure context: the app must be opened from its installed home
@@ -48,13 +64,14 @@ async function start() {
       "icon, or from the https:// page it was installed from.";
     return;
   }
+  startInFlight = true;
+  stopCapture();
+  resetTransfer();
   const captureWidth = Number((document.getElementById("cfg-width") as HTMLSelectElement).value);
   const captureFps = Number((document.getElementById("cfg-capfps") as HTMLSelectElement).value);
   const workerCount = Number((document.getElementById("cfg-workers") as HTMLSelectElement).value);
-  settings.style.display = "none";
-  startBtn.style.display = "none";
-  preview.style.display = "block";
-  metricsEl.style.display = "grid";
+  startBtn.disabled = true;
+  stats.textContent = "Requesting camera…";
   const base: MediaTrackConstraints = {
     facingMode: "environment",
     width: { ideal: captureWidth },
@@ -73,11 +90,33 @@ async function start() {
       });
     }
   } catch (err) {
-    stats.textContent = `✗ camera: ${err instanceof Error ? err.message : String(err)}`;
+    startInFlight = false;
+    showReady(`✗ camera: ${err instanceof Error ? err.message : String(err)}`);
     return;
   }
+  startInFlight = false;
+  done = false;
+  settings.style.display = "none";
+  startBtn.style.display = "none";
+  preview.style.display = "block";
+  metricsEl.style.display = "grid";
   video.srcObject = stream;
   await video.play().catch(() => undefined);
+  const track = stream.getVideoTracks()[0];
+  if (!track) {
+    stopCapture();
+    startInFlight = false;
+    showReady("✗ no camera track was returned");
+    return;
+  }
+  cameraZoom = attachCameraZoom(track, video, {
+    controls: zoomControls,
+    range: zoomRange,
+    value: zoomValue,
+    mode: zoomMode,
+    minus: zoomMinus,
+    plus: zoomPlus,
+  });
   stats.textContent = `camera ${stream.getVideoTracks()[0]?.getSettings().width}×${stream.getVideoTracks()[0]?.getSettings().height}@${stream.getVideoTracks()[0]?.getSettings().frameRate} — searching for a stream…`;
 
   for (let i = 0; i < workerCount; i++) {
@@ -89,18 +128,32 @@ async function start() {
       busy[slot] = false;
       if (bytes) onDecoded(bytes);
     };
+    w.onerror = () => {
+      busy[slot] = false;
+      stopCapture();
+      done = false;
+      showReady("✗ decoder worker stopped — restart the camera");
+    };
+    w.onmessageerror = () => {
+      busy[slot] = false;
+      stopCapture();
+      done = false;
+      showReady("✗ decoder worker message failed — restart the camera");
+    };
     workers.push(w);
     busy.push(false);
   }
 
   captureGen++;
   scheduleFrame(captureGen);
-  setInterval(updateStats, 500);
+  statsTimer = window.setInterval(updateStats, 500);
   try {
-    await (navigator as Navigator & { wakeLock?: { request(t: "screen"): Promise<unknown> } })
-      .wakeLock?.request("screen");
+    const lockApi = (navigator as Navigator & {
+      wakeLock?: { request(t: "screen"): Promise<WakeLock> };
+    }).wakeLock;
+    wakeLock = (await lockApi?.request("screen")) ?? null;
   } catch {
-    /* fine */
+    wakeLock = null;
   }
 }
 
@@ -133,7 +186,7 @@ function captureFrame() {
     grab.height = vh;
   }
   const ctx = grab.getContext("2d", { willReadFrequently: true })!;
-  ctx.drawImage(video, 0, 0);
+  cameraZoom?.drawFrame(ctx, video, vw, vh);
   const img = ctx.getImageData(0, 0, vw, vh);
   busy[slot] = true;
   workers[slot]!.postMessage({ id: frameId++, buf: img.data.buffer, w: vw, h: vh }, [
@@ -148,11 +201,22 @@ function onDecoded(bytes: Uint8Array) {
   const { header, block } = parsed;
   if (!decoder || sessionId !== header.sessionId) {
     decoder = new LTDecoder(header.k, header.blockLen, header.sessionId, header.totalLen);
+    activeHeader = { ...header };
     sessionId = header.sessionId;
     startTs = performance.now();
     progressEl.style.display = "block";
+  } else if (!activeHeader || !sameTransfer(activeHeader, header)) {
+    stopCapture();
+    showReady("✗ inconsistent frame metadata — restart the camera");
+    return;
   }
-  decoder.addFrame(header.seq, block);
+  try {
+    decoder.addFrame(header.seq, block);
+  } catch (err) {
+    stopCapture();
+    showReady(`✗ decoder: ${err instanceof Error ? err.message : String(err)}`);
+    return;
+  }
   const progress = Math.min(0.99, decoder.framesNew / (decoder.k * OVERHEAD_EST));
   bar.style.width = `${(progress * 100).toFixed(1)}%`;
 
@@ -160,8 +224,25 @@ function onDecoded(bytes: Uint8Array) {
     const payload = decoder.assemble()!;
     const seconds = (performance.now() - startTs) / 1000;
     const ok = fnv1a(payload) === header.payloadFnv;
+    if (!ok) {
+      stopCapture();
+      done = false;
+      progressEl.style.display = "none";
+      bar.style.width = "0%";
+      showReady("✗ integrity check failed — no file was saved; try again");
+      return;
+    }
     finish(payload, header, ok, seconds);
   }
+}
+
+function sameTransfer(a: FrameHeader, b: FrameHeader): boolean {
+  return a.sessionId === b.sessionId &&
+    a.k === b.k &&
+    a.blockLen === b.blockLen &&
+    a.totalLen === b.totalLen &&
+    a.payloadFnv === b.payloadFnv &&
+    a.name === b.name;
 }
 
 function detectMime(bytes: Uint8Array): string {
@@ -184,13 +265,17 @@ function guessExtension(mime: string): string {
 
 function finish(payload: Uint8Array, header: FrameHeader, hashOk: boolean, seconds: number) {
   done = true;
-  captureGen++;
-  stream?.getTracks().forEach((t) => t.stop());
+  stopCapture();
   preview.style.display = "none";
   bar.style.width = "100%";
   const kb = Math.round(header.totalLen / 1024);
   const rate = (header.totalLen / 1024 / seconds).toFixed(1);
-  stats.textContent = `${header.name} · ${kb} KB in ${seconds.toFixed(1)} s · ${rate} KB/s · hash ${hashOk ? "verified ✓" : "MISMATCH ✗"}`;
+  const mime = detectMime(payload);
+  const name = safeFileName(
+    header.name && !header.name.includes("\uFFFD") ? header.name : `received_file.${guessExtension(mime)}`,
+    `received_file.${guessExtension(mime)}`,
+  );
+  stats.textContent = `${name} · ${kb} KB in ${seconds.toFixed(1)} s · ${rate} KB/s · hash ${hashOk ? "verified ✓" : "MISMATCH ✗"}`;
 
   navigator.vibrate?.(200);
 
@@ -198,11 +283,10 @@ function finish(payload: Uint8Array, header: FrameHeader, hashOk: boolean, secon
   heading.className = "done";
   heading.textContent = "Transfer Complete!";
 
-  const name = header.name && !header.name.includes("\uFFFD")
-    ? header.name
-    : `received_file.${guessExtension(detectMime(payload))}`;
-  const file = new File([payload as BlobPart], name, { type: detectMime(payload) });
+  clearResult();
+  const file = new File([payload as BlobPart], name, { type: mime });
   const url = URL.createObjectURL(file);
+  resultUrl = url;
 
   const actions = document.createElement("div");
   actions.className = "result-actions";
@@ -217,7 +301,13 @@ function finish(payload: Uint8Array, header: FrameHeader, hashOk: boolean, secon
 
   // iOS Safari ignores the download attribute — the share sheet is the
   // reliable "Save to Files" path on iPhone.
-  if (navigator.canShare?.({ files: [file] })) {
+  let canShare = false;
+  try {
+    canShare = typeof navigator.share === "function" && navigator.canShare?.({ files: [file] }) === true;
+  } catch {
+    canShare = false;
+  }
+  if (canShare) {
     const shareBtn = document.createElement("button");
     shareBtn.className = "button button-secondary";
     shareBtn.textContent = "Share / Save";
@@ -233,10 +323,68 @@ function finish(payload: Uint8Array, header: FrameHeader, hashOk: boolean, secon
   if (file.type.startsWith("image/")) {
     const img = document.createElement("img");
     img.className = "received";
+    img.alt = name;
     img.src = url;
     result.append(img);
   }
+  showReady("Transfer complete — ready for another file");
 }
+
+function safeFileName(name: string, fallback: string): string {
+  const clean = name
+    .replace(/[\\/:*?"<>|\u0000-\u001f\u007f]/g, "_")
+    .trim()
+    .slice(0, 255);
+  return clean || fallback;
+}
+
+function clearResult() {
+  if (resultUrl) URL.revokeObjectURL(resultUrl);
+  resultUrl = null;
+  result.replaceChildren();
+}
+
+function resetTransfer() {
+  done = false;
+  decoder = null;
+  activeHeader = null;
+  sessionId = 0;
+  startTs = 0;
+  captureTimes.length = 0;
+  decodeTimes.length = 0;
+  progressEl.style.display = "none";
+  bar.style.width = "0%";
+  clearResult();
+}
+
+function stopCapture() {
+  captureGen++;
+  cameraZoom?.destroy();
+  cameraZoom = null;
+  stream?.getTracks().forEach((t) => t.stop());
+  stream = null;
+  while (workers.length > 0) workers.pop()?.terminate();
+  busy.length = 0;
+  if (statsTimer !== null) {
+    window.clearInterval(statsTimer);
+    statsTimer = null;
+  }
+  const lock = wakeLock;
+  wakeLock = null;
+  void lock?.release().catch(() => undefined);
+}
+
+function showReady(message?: string) {
+  settings.style.display = "";
+  startBtn.style.display = "";
+  startBtn.disabled = false;
+  startBtn.textContent = "Start camera";
+  preview.style.display = "none";
+  metricsEl.style.display = "none";
+  if (message) stats.textContent = message;
+}
+
+window.addEventListener("pagehide", stopCapture);
 
 function updateStats() {
   if (done) return;

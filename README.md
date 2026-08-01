@@ -1,4 +1,4 @@
-# Decimen Optical Transfer: fountain-coded QR file transfer
+# Beam: light-powered file transfer and Trail Beacon
 
 Send a file between two devices using nothing but a **screen and a camera**.
 One page displays the file as an endless stream of animated QR codes; another
@@ -6,17 +6,25 @@ device points its camera at it and reconstructs the file. **No network path
 between the devices, no app, no pairing, no permissions beyond the camera.**
 The payload travels as light.
 
+The repo also includes companion firmware for the Waveshare ESP32-S3 1.69″
+touch display. Flashing the separate `firmware/` project turns that board into
+an always-on offline Trail Beacon: one person joins its Wi-Fi and publishes a
+small local library, while visitors scan the display, join the same hotspot,
+and download trail maps or other useful files. The standalone visitor portal
+works even without Beam, and the app has a dedicated `Scan a Trail Beacon`
+route.
+
 This is a minimal proof of concept extracted from a larger
 experiment that reached **128 KB/s phone-to-phone** with denser frames,
-multi-code grids, and an error-corrected color channel. This PoC keeps only
-the essential trick and transmits a 512 KB image (or a 2 MB one, selectable
-in the sender's settings) at a comfortable rate.
+multi-code grids, and an error-corrected color channel. This version keeps
+the essential trick and can transfer arbitrary files within the selected
+QR profile and browser memory limits.
 
 <p align="center">
   <img src="docs/receiving.jpg" width="420"
-       alt="Phone receiving a 2 MB image over light: 129.2 KB/s goodput, decoding the sender's animated QR code" />
+       alt="Phone receiving a 238 KB image over light: 129.2 KB/s goodput, decoding the sender's animated QR code" />
 </p>
-<p align="center"><em>Mid-transfer: a phone pulling a 2 MB image out of the air at 129 KB/s.</em></p>
+<p align="center"><em>Mid-transfer: a phone pulling an image out of the air at 129 KB/s.</em></p>
 
 ## Try it
 
@@ -30,9 +38,13 @@ npm run dev
   screen brightness helps.
 - On the **receiving** device (a phone): open the `Network` URL Vite prints
   (`https://<lan-ip>:5173/receive/`), accept the certificate warning once,
-  tap **Start camera**, and point it at the code.
+  tap **Start camera**, use the on-screen **Zoom** control if the phone has
+  trouble focusing, and point it at the code. The control uses camera zoom
+  when the browser exposes it and falls back to a center crop otherwise.
 - A few seconds later: *Transfer Complete!* and the received image, verified
   by hash.
+- For a hardware beacon: open `/beacon/`, scan the display, join the Wi-Fi
+  shown, and tap **Open trail library**.
 
 **Why the dev server is https-only:** the receiver uses `getUserMedia`, and
 browsers remove that API entirely on insecure origins: a phone reaching
@@ -46,7 +58,8 @@ works. The odd-looking `lvh.me` hosts Vite prints are a public convenience
 domain that resolves to 127.0.0.1 (same machine, nothing extra running).
 
 Hold the phone steady, or better, prop it against something. Camera
-autofocus hunting from hand tremor is the #1 throughput killer.
+autofocus hunting from hand tremor is the #1 throughput killer. The same Zoom
+control is available in the `/beacon/` scanner.
 
 ## How it works
 
@@ -64,10 +77,11 @@ collects **any** ~K·1.15 distinct frames, in any order, and peels the file
 out of them. Dropped frames cost a little time, never correctness. Sender
 and receiver frame rates don't need to match at all.
 
-**Every frame is self-describing.** A 20-byte header carries the session id,
-sequence number, block count/size, file length, and a hash. There is no
-handshake: the receiver locks onto a stream mid-flight, and restarting the
-sender (new session id) automatically resets the receiver.
+**Every frame is self-describing.** A 120-byte frame header carries the
+20-byte fixed metadata plus the original filename, session id, sequence
+number, block count/size, file length, and a hash. There is no handshake: the
+receiver locks onto a stream mid-flight, and restarting the sender (new
+session id) automatically resets the receiver.
 
 **Decoding.** Safari has never shipped `BarcodeDetector` (WebKit bug 281848),
 so decoding is [zxing-cpp](https://github.com/zxing-cpp/zxing-cpp) compiled
@@ -95,20 +109,83 @@ mean dropped frames, which the fountain happily absorbs.
 
 ## Tuning
 
-Both pages have a collapsed **Settings** panel. On the sender: payload size
-(512 KB or 2 MB), tx fps, bytes per frame, error-correction level, and
-display size. Changing anything restarts the stream, and the receiver resets
-automatically off the new session id. On the receiver: capture width,
-capture fps, and decode worker count, applied when the camera starts.
+Both pages have a collapsed **Settings** panel. On the sender: tx fps, bytes
+per frame, error-correction level, and display size. Incompatible QR density
+profiles are disabled automatically. Changing anything restarts the stream,
+and the receiver resets automatically off the new session id. On the
+receiver: capture width, capture fps, and decode worker count, applied when
+the camera starts.
 
 | setting | default | notes |
 |---|---|---|
-| tx fps | 24 | each frame must own at least 2 refresh cycles of the display |
-| bytes / frame | 1465 (QR v27) | denser is faster if the receiver still decodes it; 2953 (v40) works phone-to-phone at close range |
+| channel | monochrome QR | **RGB tile safe/turbo** modes use small QR locators plus a calibrated color field |
+| tx fps | 30 | each frame owns at least 2 refresh cycles on a 60 Hz display |
+| bytes / frame | 1465 (QR v27) | denser is faster if the receiver still decodes it; 2833 total frame bytes (V40/L) works phone-to-phone at close range |
 
 The parent experiment's measured ceiling with this exact architecture plus
 denser frames, a 120 fps ProMotion sender, and stacked codes: ~128 KB/s
 handheld, ~186 KB/s propped.
+
+### Experimental color burst
+
+The sender's **color burst** mode keeps a real V40 QR carrier underneath, so
+the existing ZXing detector still finds and locks onto the frame. Each payload
+module uses one of eight light colors or eight dark colors: three extra bits
+per module. That is 16 physical states, not an exponential throughput gain—
+the state count grows exponentially with bits, while payload grows linearly
+with bits. Thirty-two calibration modules are fixed inside the carrier and
+sampled by the receiver first, which compensates for the camera's white
+balance and exposure. The integrity hash then rejects any frame whose color
+symbols were misread, while the fountain stream supplies the missing frame
+recovery.
+
+The unused tail of the color field is filled with seeded palette symbols so
+the whole data area stays chromatic instead of falling back to neutral black
+and white. QR structural modules such as finder, timing, and alignment
+patterns remain monochrome so the detector keeps the same geometry.
+
+The QR-compatible profile sends **11,096 raw frame bytes** at a time (10,976
+file bytes after the fixed frame header). That is about **7.6× the default
+1,465-byte profile** or **3.9× the V40 monochrome profile** before camera
+losses and fountain overhead. It is intentionally opt-in: use a bright,
+steady display and keep the receiver close. The monochrome path remains the
+compatibility and long-distance fallback.
+
+### RGB tile video
+
+The **RGB tile safe/turbo** modes remove the full-frame QR carrier. Four small
+V3 QR symbols remain at the corners only to give ZXing the frame geometry;
+the rest of the 176×176 field is calibrated RGB data. The safe profile uses
+eight colors (3 bits/tile); turbo uses sixteen colors (4 bits/tile). The
+receiver auto-detects the profile and reconstructs the screen with the four
+locators, so moderate camera rotation and perspective do not require a fixed
+phone angle.
+
+The current turbo profile carries **12,028 raw frame bytes** (11,908 file
+bytes) at 30 FPS in the ideal path; safe carries **9,018 raw bytes** (8,898
+file bytes) with a wider color margin. These are optical-channel ceilings, not promises of wired
+Ethernet speed: camera exposure, focus, display refresh, QR locator misses,
+and fountain overhead determine real goodput.
+
+## Trail Beacon hardware
+
+Build the board project without touching the existing web app:
+
+```sh
+cd firmware
+pio run
+```
+
+The board first shows a Wi-Fi join QR, then switches to an upload-page QR after
+it detects a connected phone. The public upload page at
+`http://192.168.4.1/upload` accepts a file from anyone connected to the hotspot,
+with no PIN or internet required; after upload, the board continuously displays
+Beam-compatible QR video frames for phone-camera recovery. It also keeps the local
+`http://192.168.4.1/browse` library, storing up to eight files (8 MB each) in
+internal flash. See [`firmware/README.md`](firmware/README.md) for the
+deliberate flash step and field workflow. Flashing replaces the app on the
+physical board; the prior display firmware remains intact in its separate
+checkout at `/Users/bradleym.moore/Downloads/baby-girl-display`.
 
 ## Similar projects
 

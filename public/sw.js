@@ -4,8 +4,10 @@
 // cache-first with a runtime cache fallback, so the first online visit
 // warms everything and the app then runs forever in airplane mode.
 
-const CACHE = "beam-v1";
-const SHELL = ["./", "./index.html", "./send/", "./receive/"];
+// Bump this when the app shell changes. Hashed Vite assets are filled into
+// this cache at runtime after the new shell is installed.
+const CACHE = "beam-v6";
+const SHELL = ["./", "./index.html", "./send/", "./receive/", "./beacon/"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -26,16 +28,19 @@ self.addEventListener("activate", (event) => {
 });
 
 self.addEventListener("fetch", (event) => {
-  if (event.request.method !== "GET") return;
+  if (event.request.method !== "GET" || new URL(event.request.url).origin !== self.location.origin) return;
   event.respondWith(
     caches.match(event.request).then((cached) => {
       if (cached) return cached;
       return fetch(event.request).then((response) => {
         if (response && (response.status === 200 || response.type === "opaque")) {
           const clone = response.clone();
-          caches.open(CACHE).then((cache) => cache.put(event.request, clone));
+          event.waitUntil(caches.open(CACHE).then((cache) => cache.put(event.request, clone)));
         }
         return response;
+      }).catch((err) => {
+        if (event.request.mode === "navigate") return caches.match("./");
+        throw err;
       });
     }),
   );

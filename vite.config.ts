@@ -26,9 +26,10 @@ export default defineConfig({
         index: resolve(__dirname, "index.html"),
         send: resolve(__dirname, "send/index.html"),
         receive: resolve(__dirname, "receive/index.html"),
+        beacon: resolve(__dirname, "beacon/index.html"),
       },
     },
   },
   server: { host: true },
-  preview: { host: true, allowedHosts: true },
+  preview: { host: true },
 });

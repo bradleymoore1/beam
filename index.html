@@ -27,11 +27,12 @@
         <div class="action-buttons">
             <a href="./send/" class="button">Send a file</a>
             <a href="./receive/" class="button">Receive a file</a>
+            <a href="./beacon/" class="button button-secondary">Scan a Trail Beacon</a>
         </div>
         <p class="hint footer-hint">Works fully offline once installed. On iPhone: tap Share → Add to Home Screen.</p>
     </div>
     <script>
-        if ("serviceWorker" in navigator) {
+        if ("serviceWorker" in navigator && "%MODE%" === "production") {
             navigator.serviceWorker.register("%BASE_URL%sw.js").catch(function () {});
         }
     </script>

@@ -20,7 +20,7 @@ body {
     background-color: var(--bg-color);
     background: radial-gradient(circle at top, #11111a 0%, var(--bg-color) 100%);
     color: var(--text-color);
-    min-height: 100vh;
+    min-height: 100dvh;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -82,8 +82,8 @@ a {
 
 .back-link {
     position: fixed;
-    top: 1rem;
-    left: 1rem;
+    top: max(1rem, env(safe-area-inset-top));
+    left: max(1rem, env(safe-area-inset-left));
     font-size: 0.9rem;
     color: var(--muted-color);
     z-index: 10;
@@ -136,6 +136,11 @@ button:hover, .button:hover, .action-buttons a:hover {
     box-shadow: 0 6px 20px rgba(0, 212, 170, 0.4);
 }
 
+button:focus-visible, .button:focus-visible, .dropzone:focus-visible, summary:focus-visible {
+    outline: 3px solid var(--accent-secondary);
+    outline-offset: 3px;
+}
+
 .action-buttons {
     display: flex;
     flex-direction: row;
@@ -145,6 +150,8 @@ button:hover, .button:hover, .action-buttons a:hover {
 }
 
 .dropzone {
+    display: block;
+    width: 100%;
     border: 2px dashed var(--border-color);
     border-radius: 16px;
     padding: 4rem 2rem;
@@ -207,6 +214,58 @@ button:hover, .button:hover, .action-buttons a:hover {
     height: auto;
     display: block;
     border-radius: 16px;
+}
+
+.camera-tools {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
+    gap: .55rem;
+    align-items: center;
+    padding: .7rem .8rem .8rem;
+    background: rgba(0, 0, 0, .72);
+}
+
+.zoom-step {
+    min-width: 2.25rem;
+    padding: .35rem .65rem;
+    font-size: 1.25rem;
+    line-height: 1;
+    box-shadow: none;
+}
+
+.zoom-step:hover {
+    transform: none;
+    box-shadow: none;
+}
+
+.zoom-slider {
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+    min-width: 0;
+    color: #fff;
+    font-size: .8rem;
+    white-space: nowrap;
+}
+
+.zoom-slider input {
+    width: 100%;
+    min-width: 80px;
+    accent-color: var(--accent-primary);
+}
+
+.zoom-value {
+    color: var(--accent-secondary);
+    font: 700 .9rem ui-monospace, SFMono-Regular, Menlo, monospace;
+    min-width: 2.8rem;
+    text-align: right;
+}
+
+.zoom-mode {
+    grid-column: 2 / -1;
+    color: var(--muted-color);
+    font-size: .7rem;
+    text-align: right;
 }
 
 .progress {
@@ -306,4 +365,19 @@ details.settings summary {
     h1 { font-size: 3rem; }
     .action-buttons { flex-direction: column; }
     .action-buttons a { width: 100%; }
+}
+
+@media (max-width: 420px) {
+    .camera-tools { grid-template-columns: auto minmax(0, 1fr) auto; }
+    .zoom-value { grid-column: 2; grid-row: 2; text-align: left; }
+    .zoom-mode { grid-column: 3; grid-row: 2; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        scroll-behavior: auto !important;
+        transition-duration: 0.01ms !important;
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+    }
 }

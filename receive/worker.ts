@@ -5,6 +5,9 @@
 
 import wasmUrl from "zxing-wasm/reader/zxing_reader.wasm?url";
 import { prepareZXingModule, readBarcodes } from "zxing-wasm/reader";
+import { decodeBeaconFrameText } from "../shared/beacon-frame";
+import { decodeColorImage, isColorCarrier } from "../shared/color-frame";
+import { decodeCustomImage, isCustomLocator } from "../shared/custom-frame";
 
 prepareZXingModule({
   overrides: {
@@ -22,9 +25,33 @@ ctx.onmessage = async (e: MessageEvent) => {
   const { id, buf, w, h } = e.data as { id: number; buf: ArrayBuffer; w: number; h: number };
   try {
     const img = new ImageData(new Uint8ClampedArray(buf), w, h);
-    const results = await readBarcodes(img, { formats: ["QRCode"], maxNumberOfSymbols: 1 });
-    const r = results.find((x) => x.isValid && x.bytes.length > 0);
-    ctx.postMessage({ id, bytes: r ? r.bytes : null });
+    const results = await readBarcodes(img, {
+      formats: ["QRCode"],
+      maxNumberOfSymbols: 4,
+      returnErrors: true,
+    });
+    const carriers = results.filter((x) => x.isValid && x.bytes.length > 0);
+    const carrier = carriers[0];
+    const beaconBytes = carrier ? decodeBeaconFrameText(carrier.text) : null;
+    if (beaconBytes) {
+      ctx.postMessage({ id, bytes: beaconBytes }, [beaconBytes.buffer]);
+      return;
+    }
+    if (carrier && isColorCarrier(carrier.bytes)) {
+      const version = Number(carrier.version.replace(/\D/g, ""));
+      const bytes = decodeColorImage(img, carrier.position, version);
+      ctx.postMessage({ id, bytes });
+      return;
+    }
+    const customLocators = carriers
+      .filter((x) => isCustomLocator(x.bytes))
+      .map((x) => x.position);
+    if (customLocators.length >= 4) {
+      const bytes = decodeCustomImage(img, customLocators);
+      ctx.postMessage({ id, bytes });
+      return;
+    }
+    ctx.postMessage({ id, bytes: carrier?.bytes ?? null });
   } catch {
     ctx.postMessage({ id, bytes: null });
   }

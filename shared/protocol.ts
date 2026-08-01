@@ -20,11 +20,14 @@
 
 export const NAME_LEN = 100;
 export const HEADER_LEN = 20 + NAME_LEN;
+export const MAX_K = 0xffff;
+export const MAX_TOTAL_LEN = 256 * 1024 * 1024;
 const MAGIC0 = 0xd1;
 const MAGIC1 = 0x0c;
 
 const nameEncoder = new TextEncoder();
 const nameDecoder = new TextDecoder("utf-8", { fatal: false });
+const strictNameDecoder = new TextDecoder("utf-8", { fatal: true });
 
 export interface FrameHeader {
   sessionId: number;
@@ -40,7 +43,14 @@ function encodeName(name: string): Uint8Array {
   const out = new Uint8Array(NAME_LEN);
   const raw = nameEncoder.encode(name);
   let len = Math.min(NAME_LEN, raw.length);
-  while (len > 0 && (raw[len - 1]! & 0xc0) === 0x80) len--; // don't split a multibyte char
+  while (len > 0) {
+    try {
+      strictNameDecoder.decode(raw.subarray(0, len));
+      break;
+    } catch {
+      len--;
+    }
+  }
   out.set(raw.subarray(0, len));
   return out;
 }
@@ -52,6 +62,13 @@ function decodeName(raw: Uint8Array): string {
 }
 
 export function packFrame(h: FrameHeader, block: Uint8Array): Uint8Array {
+  if (h.k < 1 || h.k > MAX_K) throw new Error("invalid source block count");
+  if (h.blockLen < 1 || h.blockLen > 0xffff) throw new Error("invalid block length");
+  if (h.totalLen < 0 || h.totalLen > MAX_TOTAL_LEN) throw new Error("file is too large");
+  if (h.k !== Math.max(1, Math.ceil(h.totalLen / h.blockLen))) {
+    throw new Error("inconsistent frame metadata");
+  }
+  if (block.length !== h.blockLen) throw new Error("invalid frame payload length");
   const out = new Uint8Array(HEADER_LEN + block.length);
   const dv = new DataView(out.buffer);
   dv.setUint8(0, MAGIC0);
@@ -82,7 +99,8 @@ export function parseFrame(
     payloadFnv: dv.getUint32(16, true),
     name: decodeName(bytes.subarray(20, 20 + NAME_LEN)),
   };
-  if (header.k === 0 || header.blockLen === 0 || header.totalLen === 0) return null;
+  if (header.blockLen === 0 || header.totalLen > MAX_TOTAL_LEN) return null;
+  if (header.k !== Math.max(1, Math.ceil(header.totalLen / header.blockLen))) return null;
   if (bytes.length !== HEADER_LEN + header.blockLen) return null;
   return { header, block: bytes.subarray(HEADER_LEN) };
 }
