@@ -36,11 +36,10 @@
           transport
           <select id="cfg-mode">
             <option value="mono" selected>standard QR · reliable</option>
-            <option value="binary">binary tiles · experimental</option>
-            <option value="tricolor">red + green + black · experimental</option>
+            <option value="stacked">4× standard QR · fast</option>
           </select>
         </label>
-        <label>
+        <label hidden>
           density
           <select id="cfg-density">
             <option value="auto" selected>auto for screen</option>
@@ -92,7 +91,7 @@
       </div>
     </details>
 
-    <div class="stage" id="stage" style="display: none;"><canvas id="qr" width="16" height="16" role="img" aria-label="Animated binary optical transfer frame"></canvas></div>
+    <div class="stage" id="stage" style="display: none;"><canvas id="qr" width="16" height="16" role="img" aria-label="Animated optical file-transfer frame"></canvas></div>
 
     <div class="hint">
       Max screen brightness helps. Keep all four corner markers in view. The

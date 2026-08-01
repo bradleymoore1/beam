@@ -23,6 +23,8 @@ import {
 } from "../shared/custom-frame";
 
 const MARGIN = 4;
+const STACKED_FRAME_BYTES = 800;
+const STACKED_GAP = 4;
 // Keep enough already-rendered frames queued to absorb a tile
 // encode or a garbage-collection pause without starving the display clock.
 const LOOKAHEAD = 6;
@@ -128,17 +130,17 @@ async function handleFile(file: File) {
 
 async function startStream(payload: Uint8Array) {
   const gen = ++generation;
-  const mode = cfgMode.value as "mono" | CustomMode;
+  const mode = cfgMode.value as "mono" | "stacked" | CustomMode;
   const txFps = Number(cfgFps.value);
-  const ecc = cfgEcc.value as "L" | "M" | "Q" | "H";
+  const ecc = (mode === "stacked" ? "M" : cfgEcc.value) as "L" | "M" | "Q" | "H";
   const displayPx = Number(cfgSize.value);
-  const customMode = mode === "mono" ? null : mode;
+  const customMode = mode === "binary" || mode === "tricolor" ? mode : null;
   const customLayout = customMode
     ? createCustomLayout(selectGridSize(displayPx), customMode)
     : null;
   const frameBytes = customLayout
     ? customCapacityForMode(customLayout, customMode!) - CUSTOM_HEADER_LEN
-    : Number(cfgBytes.value);
+    : mode === "stacked" ? STACKED_FRAME_BYTES : Number(cfgBytes.value);
 
   const random = new Uint32Array(1);
   crypto.getRandomValues(random);
@@ -246,6 +248,44 @@ async function startStream(payload: Uint8Array) {
       }
       return img;
     }
+    if (mode === "stacked") {
+      const frames = [bytes];
+      for (let index = 1; index < 4; index++) {
+        frames.push(packFrame({ ...header, seq: nextSeq }, encoder.encode(nextSeq)));
+        nextSeq++;
+      }
+      const codes = frames.map((frame) => QRCode.create(
+        [{ data: frame, mode: "byte" } as unknown as QRCode.QRCodeSegment],
+        { errorCorrectionLevel: "M", maskPattern: 4 },
+      ));
+      const size = codes[0]!.modules.size;
+      if (codes.some((code) => code.modules.size !== size)) throw new Error("stacked QR sizes diverged");
+      if (version === undefined) {
+        version = codes[0]!.version;
+        modules = size * 2 + MARGIN * 2 + STACKED_GAP;
+        sizeCanvas();
+        specs.textContent =
+          `${currentFileName} (${Math.round(payload.length / 1024)} KB) · ` +
+          `${txFps} FPS · 4×${frameBytes} bytes/frame · stacked V${version} ECC M · K=${encoder.k}`;
+      }
+      const total = modules + 2 * MARGIN;
+      const img = new ImageData(total, total);
+      const px = new Uint32Array(img.data.buffer);
+      px.fill(0xffffffff);
+      for (let codeIndex = 0; codeIndex < codes.length; codeIndex++) {
+        const code = codes[codeIndex]!;
+        const originX = MARGIN + (codeIndex % 2) * (size + MARGIN * 2 + STACKED_GAP);
+        const originY = MARGIN + Math.floor(codeIndex / 2) * (size + MARGIN * 2 + STACKED_GAP);
+        for (let y = 0; y < size; y++) {
+          const destinationRow = (originY + y) * total + originX;
+          const sourceRow = y * size;
+          for (let x = 0; x < size; x++) {
+            if (code.modules.data[sourceRow + x]) px[destinationRow + x] = 0xff000000;
+          }
+        }
+      }
+      return img;
+    }
     const qr = QRCode.create([{ data: bytes, mode: "byte" } as unknown as QRCode.QRCodeSegment], {
       errorCorrectionLevel: ecc,
       version,
@@ -330,10 +370,13 @@ async function startStream(payload: Uint8Array) {
 }
 
 function syncTuningOptions() {
-  const customMode = cfgMode.value === "mono" ? null : cfgMode.value as CustomMode;
+  const stacked = cfgMode.value === "stacked";
+  const customMode = cfgMode.value === "binary" || cfgMode.value === "tricolor"
+    ? cfgMode.value as CustomMode
+    : null;
   cfgDensity.disabled = !customMode;
-  cfgBytes.disabled = Boolean(customMode);
-  cfgEcc.disabled = Boolean(customMode);
+  cfgBytes.disabled = Boolean(customMode) || stacked;
+  cfgEcc.disabled = Boolean(customMode) || stacked;
   const ecc = cfgEcc.value as keyof typeof MAX_FRAME_BYTES_BY_ECC;
   const maxBytes = MAX_FRAME_BYTES_BY_ECC[ecc];
   let frameBytes = Number(cfgBytes.value);
@@ -354,7 +397,9 @@ function syncTuningOptions() {
   const selectedSize = selectGridSize(Number(cfgSize.value));
   const selectedLayout = createCustomLayout(selectedSize, customMode ?? "binary");
   const selectedBytes = customCapacityForMode(selectedLayout, customMode ?? "binary") - CUSTOM_HEADER_LEN;
-  tuningHint.textContent = customMode
+  tuningHint.textContent = stacked
+    ? `Fast mode uses four ordinary Version 23 QR codes at ECC M: ${(STACKED_FRAME_BYTES * 4).toLocaleString()} raw bytes per display frame. No custom pixel decoder.`
+    : customMode
     ? `${customMode === "tricolor" ? "Tricolor red/green/black" : "Binary"} ${selectedSize}×${selectedSize}: ${selectedBytes.toLocaleString()} protected bytes/frame. Auto scales from phone to TV; 512 is manual for 4K plus 1920+ camera capture.`
     : `Standard monochrome QR compatibility mode. For ECC ${ecc}, the maximum profile is ${maxBytes} bytes/frame.`;
 }

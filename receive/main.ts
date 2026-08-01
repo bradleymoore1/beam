@@ -46,7 +46,7 @@ let startInFlight = false;
 let statsTimer: number | null = null;
 let resultUrl: string | null = null;
 let cameraZoom: CameraZoomController | null = null;
-let scanMaxSymbols = 4;
+let scanMaxSymbols = 8;
 
 type WakeLock = { release: () => Promise<void> };
 let wakeLock: WakeLock | null = null;
@@ -87,7 +87,10 @@ async function start() {
   const captureFps = Number(captureFpsSelect.value);
   const workerCount = Number((document.getElementById("cfg-workers") as HTMLSelectElement).value);
   const scanSource = scanSourceSelect.value;
-  scanMaxSymbols = scanSource === "paper" ? 12 : 4;
+  // Ask for spare candidates in screen mode. At a tight crop ZXing can
+  // return one invalid finder candidate before the four real stacked QRs;
+  // a limit of exactly four then silently drops one valid packet.
+  scanMaxSymbols = scanSource === "paper" ? 12 : 8;
   startBtn.disabled = true;
   stats.textContent = "Requesting camera…";
   const base: MediaTrackConstraints = {

@@ -1,11 +1,10 @@
 # Beam: light-powered file transfer and Trail Beacon
 
 Send a file between two devices using a **screen and a camera**. The fast web
-mode can display an endless stream of protected binary or calibrated tricolor
-tiles with four small QR locators; the compatibility mode uses ordinary
-animated QR codes. Beam Paper freezes the same fountain packets into durable,
-scan-any-order printed sheets. Another device points its camera at the carrier
-and reconstructs the file.
+fast mode displays four ordinary QR codes per video frame; reliable mode uses
+one larger ordinary QR. Beam Paper freezes the same fountain packets into
+durable, scan-any-order printed sheets. Another device points its camera at
+the carrier and reconstructs the file.
 **No network path between the devices, no app, and no pairing.**
 
 The repo also includes companion firmware for the Waveshare ESP32-S3 1.69″
@@ -123,7 +122,7 @@ the camera starts.
 
 | setting | default | notes |
 |---|---|---|
-| channel | standard QR | proven default; binary tiles are experimental until validated on the specific camera/display pair |
+| channel | standard QR | proven default; 4× stacked standard QR is the fast option |
 | tx fps | 20 | aligns cleanly with common 30/60 fps phone capture and yields a 29.3 KB/s raw QR ceiling |
 | bytes / frame | automatic | binary mode selects 176², 256², or 352² from screen size; 512² is available manually for 4K |
 
@@ -131,9 +130,20 @@ The parent experiment's measured ceiling with this exact architecture plus
 denser frames, a 120 fps ProMotion sender, and stacked codes: ~128 KB/s
 handheld, ~186 KB/s propped.
 
-### Binary tile video
+### Stacked standard-QR video
 
-The fast mode removes the full-frame QR carrier. Four small Version 1 QR
+Fast mode renders a 2×2 grid of four independent Version 23 QR codes at ECC M.
+Each code carries a different 800-byte fountain frame, so one camera exposure
+can contribute up to 3,200 raw bytes. At 20 display FPS the raw ceiling is
+64 KB/s before fountain overhead and dropped symbols. The receiver asks
+ZXing for eight candidates so a false finder cannot consume one of the four
+valid result slots. Stress tests recover all four packets after 40% temporal
+frame blending and from a 360-pixel-wide composite. A fountain simulation with
+only 80% of QR tiles accepted yields roughly 32–39 KB/s depending on file size.
+
+### Custom tile research
+
+The repository retains an unexposed research mode that removes the full-frame QR carrier. Four small Version 1 QR
 symbols remain at the corners only to give the receiver reliable frame
 geometry. The field scales through 176², 256², 352², and 512² profiles,
 carrying one hard black/white bit per tile plus repeated calibration cells.
@@ -157,6 +167,8 @@ corrected. Protected capacities are 3,865, 8,880, 17,405, and 37,665 bytes per
 frame: about 77 KB/s on the phone profile at 20 FPS before fountain overhead
 and dropped frames. The receiver learns the observed RGB palette from repeated
 calibration patches in each frame instead of assuming ideal display colors.
+These carriers are intentionally absent from the normal UI because live iPhone
+tests did not produce reliable goodput; synthetic codec success is not enough.
 
 ### Beam Paper
 
