@@ -5,12 +5,15 @@ import { fnv1a } from "./protocol";
 // are locators only; the rest is a raw black/white field. Binary survives
 // camera demosaicing, white balance, compression, and imperfect focus much
 // better than the retired RGB carrier while reclaiming QR's format overhead.
+// Tricolor is a separate, calibrated red/green/black experiment. It uses a
+// real ternary code rather than pretending three states are two binary bits.
 export const CUSTOM_GRID_SIZES = [176, 256, 352, 512] as const;
 export type CustomGridSize = (typeof CUSTOM_GRID_SIZES)[number];
 export const CUSTOM_DEFAULT_GRID_SIZE: CustomGridSize = 176;
 export const CUSTOM_OUTER_MARGIN = 4;
 export const CUSTOM_BINARY_SYMBOL_BITS = 1;
-export const CUSTOM_SYMBOL_COUNT = 2;
+export const CUSTOM_BINARY_SYMBOL_COUNT = 2;
+export const CUSTOM_TRICOLOR_SYMBOL_COUNT = 3;
 export const CUSTOM_HEADER_LEN = 10;
 export const CUSTOM_LOCATOR_VERSION = 1;
 export const CUSTOM_LOCATOR_SIZE = 21;
@@ -25,6 +28,7 @@ const PROTOCOL_VERSION = 2;
 const BORDER_CELLS = 2;
 
 export type CustomPoint = { x: number; y: number };
+export type CustomMode = "binary" | "tricolor";
 
 export type CustomPosition = {
   topLeft: CustomPoint;
@@ -40,6 +44,8 @@ export type RgbaImage = {
 };
 
 export type CustomLayout = {
+  mode: CustomMode;
+  symbolCount: number;
   size: number;
   dataPositions: Uint32Array;
   dataRows: Uint16Array;
@@ -65,10 +71,10 @@ export type CustomLocator = {
   centerY: number;
 };
 
-const cachedLayouts = new Map<number, CustomLayout>();
+const cachedLayouts = new Map<string, CustomLayout>();
 
-function locatorText(size: number): string {
-  return `H${size}`;
+function locatorText(size: number, mode: CustomMode): string {
+  return `${mode === "tricolor" ? "T" : "H"}${size}`;
 }
 
 function setReserved(layout: Uint8Array, size: number, x: number, y: number): void {
@@ -76,15 +82,19 @@ function setReserved(layout: Uint8Array, size: number, x: number, y: number): vo
   layout[y * size + x] = 1;
 }
 
-export function createCustomLayout(size: number = CUSTOM_DEFAULT_GRID_SIZE): CustomLayout {
+export function createCustomLayout(
+  size: number = CUSTOM_DEFAULT_GRID_SIZE,
+  mode: CustomMode = "binary",
+): CustomLayout {
   if (!(CUSTOM_GRID_SIZES as readonly number[]).includes(size)) {
     throw new Error(`unsupported binary grid ${size}`);
   }
-  const cached = cachedLayouts.get(size);
+  const cacheKey = `${mode}:${size}`;
+  const cached = cachedLayouts.get(cacheKey);
   if (cached) return cached;
 
   const locator = QRCode.create(
-    [{ data: new TextEncoder().encode(locatorText(size)), mode: "byte" }],
+    [{ data: new TextEncoder().encode(locatorText(size, mode)), mode: "byte" }],
     { version: CUSTOM_LOCATOR_VERSION, errorCorrectionLevel: "H", maskPattern: 4 },
   );
   const reserved = new Uint8Array(size * size);
@@ -151,10 +161,13 @@ export function createCustomLayout(size: number = CUSTOM_DEFAULT_GRID_SIZE): Cus
   const calibrationSymbols: number[] = [];
   const calibrationIndex = new Uint8Array(size * size);
   calibrationIndex.fill(0xff);
-  const calibrationX = Math.floor(size / 2) - CUSTOM_SYMBOL_COUNT / 2;
+  const symbolCount = mode === "tricolor"
+    ? CUSTOM_TRICOLOR_SYMBOL_COUNT
+    : CUSTOM_BINARY_SYMBOL_COUNT;
+  const calibrationX = Math.floor(size / 2) - Math.floor(symbolCount / 2);
   const calibrationY = Math.floor(size / 2);
   for (let copy = 0; copy < CUSTOM_CALIBRATION_COPIES; copy++) {
-    for (let symbol = 0; symbol < CUSTOM_SYMBOL_COUNT; symbol++) {
+    for (let symbol = 0; symbol < symbolCount; symbol++) {
       const x = calibrationX + symbol;
       const y = calibrationY + copy;
       const position = y * size + x;
@@ -182,6 +195,8 @@ export function createCustomLayout(size: number = CUSTOM_DEFAULT_GRID_SIZE): Cus
   }
 
   const layout: CustomLayout = {
+    mode,
+    symbolCount,
     size,
     dataPositions: Uint32Array.from(dataPositions),
     dataRows: Uint16Array.from(dataRows),
@@ -199,7 +214,7 @@ export function createCustomLayout(size: number = CUSTOM_DEFAULT_GRID_SIZE): Cus
     calibrationIndex,
     calibrationSymbols: Uint8Array.from(calibrationSymbols),
   };
-  cachedLayouts.set(size, layout);
+  cachedLayouts.set(cacheKey, layout);
   return layout;
 }
 
@@ -214,6 +229,13 @@ export function customCapacityForBits(
   if (symbolBits !== CUSTOM_BINARY_SYMBOL_BITS) throw new Error("unsupported custom symbol depth");
   // Extended Hamming(8,4) stores four protected payload bits in eight tiles.
   return Math.floor(layout.dataPositions.length / 16);
+}
+
+export function customCapacityForMode(layout: CustomLayout, mode: CustomMode): number {
+  if (mode === "binary") return customCapacityForBits(layout, CUSTOM_BINARY_SYMBOL_BITS);
+  const codewords = Math.floor(layout.dataPositions.length / 13);
+  const fiveByteBlocks = Math.floor((codewords * 10) / 26);
+  return fiveByteBlocks * 5;
 }
 
 function fillerSymbol(symbolIndex: number, seed: number, symbolBits: number): number {
@@ -242,6 +264,18 @@ export function customSymbolAt(
     symbol = (symbol << 1) | value;
   }
   return symbol;
+}
+
+function fillerTrit(symbolIndex: number, seed: number): number {
+  let value = (Math.imul(symbolIndex + 1, 0x9e3779b1) ^ seed) >>> 0;
+  value ^= value >>> 16;
+  value = Math.imul(value, 0x85ebca6b) >>> 0;
+  value ^= value >>> 13;
+  return (value >>> 0) % 3;
+}
+
+export function tricolorSymbolAt(symbols: Uint8Array, symbolIndex: number, padSeed = 0): number {
+  return symbols[symbolIndex] ?? fillerTrit(symbolIndex, padSeed);
 }
 
 export function createCustomEnvelope(
@@ -284,6 +318,119 @@ export function createCustomEnvelope(
   return encoded;
 }
 
+const TERNARY_COLUMNS: readonly (readonly [number, number, number])[] = [
+  [1, 0, 0], [0, 1, 0], [0, 0, 1],
+  [1, 0, 1], [1, 0, 2], [1, 1, 0], [1, 1, 1],
+  [1, 1, 2], [1, 2, 0], [1, 2, 1], [1, 2, 2],
+  [0, 1, 1], [0, 1, 2],
+];
+
+function encodeTernaryHamming(data: Uint8Array): Uint8Array {
+  const codeword = new Uint8Array(13);
+  codeword.set(data.subarray(0, 10), 3);
+  for (let row = 0; row < 3; row++) {
+    let sum = 0;
+    for (let column = 3; column < 13; column++) {
+      sum += TERNARY_COLUMNS[column]![row]! * codeword[column]!;
+    }
+    codeword[row] = (3 - (sum % 3)) % 3;
+  }
+  return codeword;
+}
+
+function decodeTernaryHamming(codeword: Uint8Array): Uint8Array | null {
+  const syndrome = [0, 0, 0];
+  for (let row = 0; row < 3; row++) {
+    for (let column = 0; column < 13; column++) {
+      syndrome[row] = (syndrome[row]! + TERNARY_COLUMNS[column]![row]! * codeword[column]!) % 3;
+    }
+  }
+  if (syndrome[0] || syndrome[1] || syndrome[2]) {
+    let corrected = false;
+    for (let column = 0; column < 13 && !corrected; column++) {
+      for (let error = 1; error <= 2; error++) {
+        const basis = TERNARY_COLUMNS[column]!;
+        if (
+          syndrome[0] === (basis[0] * error) % 3 &&
+          syndrome[1] === (basis[1] * error) % 3 &&
+          syndrome[2] === (basis[2] * error) % 3
+        ) {
+          codeword[column] = (codeword[column]! + 3 - error) % 3;
+          corrected = true;
+          break;
+        }
+      }
+    }
+    if (!corrected) return null;
+  }
+  return codeword.slice(3);
+}
+
+function bytesToTrits(bytes: Uint8Array): Uint8Array {
+  if (bytes.length % 5 !== 0) throw new Error("tricolor payload must use five-byte blocks");
+  const trits = new Uint8Array((bytes.length / 5) * 26);
+  for (let block = 0; block < bytes.length / 5; block++) {
+    let value = 0n;
+    for (let index = 0; index < 5; index++) {
+      value = (value << 8n) | BigInt(bytes[block * 5 + index]!);
+    }
+    for (let digit = 25; digit >= 0; digit--) {
+      trits[block * 26 + digit] = Number(value % 3n);
+      value /= 3n;
+    }
+  }
+  return trits;
+}
+
+function tritsToBytes(trits: Uint8Array): Uint8Array | null {
+  if (trits.length % 26 !== 0) return null;
+  const bytes = new Uint8Array((trits.length / 26) * 5);
+  for (let block = 0; block < trits.length / 26; block++) {
+    let value = 0n;
+    for (let digit = 0; digit < 26; digit++) {
+      value = value * 3n + BigInt(trits[block * 26 + digit]!);
+    }
+    if (value >= (1n << 40n)) return null;
+    for (let index = 4; index >= 0; index--) {
+      bytes[block * 5 + index] = Number(value & 0xffn);
+      value >>= 8n;
+    }
+  }
+  return bytes;
+}
+
+export function createTricolorEnvelope(raw: Uint8Array, decodedCapacity: number): Uint8Array {
+  if (raw.length > 0xffff) throw new Error("tricolor frame is too large");
+  if (decodedCapacity % 5 !== 0) throw new Error("invalid tricolor carrier capacity");
+  if (CUSTOM_HEADER_LEN + raw.length > decodedCapacity) throw new Error("tricolor frame exceeds carrier");
+  const decoded = new Uint8Array(decodedCapacity);
+  const padSeed = fnv1a(raw);
+  for (let index = 0; index < decoded.length; index++) decoded[index] = fillerSymbol(index, padSeed, 8);
+  const view = new DataView(decoded.buffer);
+  view.setUint8(0, MAGIC0);
+  view.setUint8(1, MAGIC1);
+  view.setUint8(2, 3);
+  view.setUint8(3, CUSTOM_TRICOLOR_SYMBOL_COUNT);
+  view.setUint16(4, raw.length, true);
+  view.setUint32(6, fnv1a(raw), true);
+  decoded.set(raw, CUSTOM_HEADER_LEN);
+
+  const dataTrits = bytesToTrits(decoded);
+  const codewordCount = Math.ceil(dataTrits.length / 10);
+  const encoded = new Uint8Array(codewordCount * 13);
+  for (let codewordIndex = 0; codewordIndex < codewordCount; codewordIndex++) {
+    const data = new Uint8Array(10);
+    for (let index = 0; index < 10; index++) {
+      data[index] = dataTrits[codewordIndex * 10 + index] ?? fillerTrit(codewordIndex * 10 + index, padSeed);
+    }
+    const codeword = encodeTernaryHamming(data);
+    for (let position = 0; position < 13; position++) {
+      encoded[position * codewordCount + codewordIndex] = codeword[position]!;
+    }
+  }
+  return encoded;
+}
+
 function encodeHamming84(nibble: number): number {
   const bits = new Uint8Array(9);
   bits[3] = (nibble >> 3) & 1;
@@ -317,14 +464,16 @@ function decodeHamming84(codeword: number): number {
 
 function parseCustomHeader(
   bytes: Uint8Array,
+  version: number,
+  symbolCount: number,
 ): { rawLen: number; rawFnv: number; symbolBits: number } | null {
   if (bytes.length < CUSTOM_HEADER_LEN) return null;
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   if (
     view.getUint8(0) !== MAGIC0 ||
     view.getUint8(1) !== MAGIC1 ||
-    view.getUint8(2) !== PROTOCOL_VERSION ||
-    view.getUint8(3) !== CUSTOM_BINARY_SYMBOL_BITS
+    view.getUint8(2) !== version ||
+    view.getUint8(3) !== symbolCount
   ) return null;
   return {
     rawLen: view.getUint16(4, true),
@@ -349,18 +498,45 @@ export function decodeCustomEnvelope(symbols: Uint8Array, symbolBits: number): U
     if (codewordIndex & 1) bytes[byteIndex] |= nibble;
     else bytes[byteIndex] = nibble << 4;
   }
-  const header = parseCustomHeader(bytes);
+  const header = parseCustomHeader(bytes, PROTOCOL_VERSION, CUSTOM_BINARY_SYMBOL_BITS);
   if (!header || header.rawLen > bytes.length - CUSTOM_HEADER_LEN) return null;
   const raw = bytes.slice(CUSTOM_HEADER_LEN, CUSTOM_HEADER_LEN + header.rawLen);
   return header.symbolBits === symbolBits && fnv1a(raw) === header.rawFnv ? raw : null;
 }
 
-export function customGridSizeFromLocator(bytes: Uint8Array): number | null {
+export function decodeTricolorEnvelope(symbols: Uint8Array, decodedCapacity: number): Uint8Array | null {
+  const dataTritCount = (decodedCapacity / 5) * 26;
+  const codewordCount = Math.ceil(dataTritCount / 10);
+  if (symbols.length < codewordCount * 13) return null;
+  const dataTrits = new Uint8Array(codewordCount * 10);
+  for (let codewordIndex = 0; codewordIndex < codewordCount; codewordIndex++) {
+    const codeword = new Uint8Array(13);
+    for (let position = 0; position < 13; position++) {
+      codeword[position] = symbols[position * codewordCount + codewordIndex]!;
+    }
+    const decoded = decodeTernaryHamming(codeword);
+    if (!decoded) return null;
+    dataTrits.set(decoded, codewordIndex * 10);
+  }
+  const bytes = tritsToBytes(dataTrits.slice(0, dataTritCount));
+  if (!bytes) return null;
+  const header = parseCustomHeader(bytes, 3, CUSTOM_TRICOLOR_SYMBOL_COUNT);
+  if (!header || header.rawLen > bytes.length - CUSTOM_HEADER_LEN) return null;
+  const raw = bytes.slice(CUSTOM_HEADER_LEN, CUSTOM_HEADER_LEN + header.rawLen);
+  return fnv1a(raw) === header.rawFnv ? raw : null;
+}
+
+export function customLocatorInfo(bytes: Uint8Array): { size: number; mode: CustomMode } | null {
   const text = new TextDecoder().decode(bytes);
-  const match = /^H(\d{3})$/.exec(text);
+  const match = /^([HT])(\d{3})$/.exec(text);
   if (!match) return null;
-  const size = Number(match[1]);
-  return (CUSTOM_GRID_SIZES as readonly number[]).includes(size) ? size : null;
+  const size = Number(match[2]);
+  if (!(CUSTOM_GRID_SIZES as readonly number[]).includes(size)) return null;
+  return { size, mode: match[1] === "T" ? "tricolor" : "binary" };
+}
+
+export function customGridSizeFromLocator(bytes: Uint8Array): number | null {
+  return customLocatorInfo(bytes)?.size ?? null;
 }
 
 export function isCustomLocator(bytes: Uint8Array): boolean {
@@ -500,8 +676,9 @@ export function decodeCustomImage(
 ): Uint8Array | null {
   const mapper = createGridMapper(positions, layout);
   if (!mapper) return null;
-  const levels = new Float32Array(CUSTOM_SYMBOL_COUNT);
-  const paletteCounts = new Uint8Array(CUSTOM_SYMBOL_COUNT);
+  const levels = new Float32Array(layout.symbolCount);
+  const paletteRgb = new Float32Array(layout.symbolCount * 3);
+  const paletteCounts = new Uint8Array(layout.symbolCount);
   for (let index = 0; index < layout.calibrationPositions.length; index++) {
     const symbol = layout.calibrationSymbols[index]!;
     const sample = sampleRgb(
@@ -511,25 +688,59 @@ export function decodeCustomImage(
       layout.calibrationColumns[index]!,
     );
     levels[symbol] += luminance(sample);
+    paletteRgb[symbol * 3] += sample[0];
+    paletteRgb[symbol * 3 + 1] += sample[1];
+    paletteRgb[symbol * 3 + 2] += sample[2];
     paletteCounts[symbol] = (paletteCounts[symbol] ?? 0) + 1;
   }
-  for (let index = 0; index < CUSTOM_SYMBOL_COUNT; index++) {
+  for (let index = 0; index < layout.symbolCount; index++) {
     const count = paletteCounts[index] || 1;
     levels[index] /= count;
+    paletteRgb[index * 3] /= count;
+    paletteRgb[index * 3 + 1] /= count;
+    paletteRgb[index * 3 + 2] /= count;
   }
-  // Symbol 0 is white and symbol 1 is black. Reject badly blurred/exposed
-  // frames before they can poison the fountain decoder.
-  if (levels[0]! - levels[1]! < 36) return null;
-  const threshold = (levels[0]! + levels[1]!) / 2;
   const symbols = new Uint8Array(layout.dataPositions.length);
-  for (let index = 0; index < layout.dataPositions.length; index++) {
-    const sample = sampleRgb(
-      image,
-      mapper,
-      layout.dataRows[index]!,
-      layout.dataColumns[index]!,
-    );
-    symbols[index] = luminance(sample) < threshold ? 1 : 0;
+  if (layout.mode === "binary") {
+    // Symbol 0 is white and symbol 1 is black. Reject badly blurred/exposed
+    // frames before they can poison the fountain decoder.
+    if (levels[0]! - levels[1]! < 36) return null;
+    const threshold = (levels[0]! + levels[1]!) / 2;
+    for (let index = 0; index < layout.dataPositions.length; index++) {
+      const sample = sampleRgb(image, mapper, layout.dataRows[index]!, layout.dataColumns[index]!);
+      symbols[index] = luminance(sample) < threshold ? 1 : 0;
+    }
+    return decodeCustomEnvelope(symbols, CUSTOM_BINARY_SYMBOL_BITS);
   }
-  return decodeCustomEnvelope(symbols, CUSTOM_BINARY_SYMBOL_BITS);
+
+  // Tricolor symbols are red, green, and black. Learn their observed RGB
+  // centroids from this exact camera exposure and classify by nearest color.
+  // The minimum separation rejects clipped or badly defocused frames.
+  let minimumDistance = Number.POSITIVE_INFINITY;
+  for (let a = 0; a < layout.symbolCount; a++) {
+    for (let b = a + 1; b < layout.symbolCount; b++) {
+      const dr = paletteRgb[a * 3]! - paletteRgb[b * 3]!;
+      const dg = paletteRgb[a * 3 + 1]! - paletteRgb[b * 3 + 1]!;
+      const db = paletteRgb[a * 3 + 2]! - paletteRgb[b * 3 + 2]!;
+      minimumDistance = Math.min(minimumDistance, Math.hypot(dr, dg, db));
+    }
+  }
+  if (minimumDistance < 54) return null;
+  for (let index = 0; index < layout.dataPositions.length; index++) {
+    const sample = sampleRgb(image, mapper, layout.dataRows[index]!, layout.dataColumns[index]!);
+    let bestSymbol = 0;
+    let bestDistance = Number.POSITIVE_INFINITY;
+    for (let symbol = 0; symbol < layout.symbolCount; symbol++) {
+      const dr = sample[0] - paletteRgb[symbol * 3]!;
+      const dg = sample[1] - paletteRgb[symbol * 3 + 1]!;
+      const db = sample[2] - paletteRgb[symbol * 3 + 2]!;
+      const distance = dr * dr + dg * dg + db * db;
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        bestSymbol = symbol;
+      }
+    }
+    symbols[index] = bestSymbol;
+  }
+  return decodeTricolorEnvelope(symbols, customCapacityForMode(layout, "tricolor"));
 }

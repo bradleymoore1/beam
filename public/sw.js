@@ -6,7 +6,7 @@
 
 // Bump this when the app shell changes. Hashed Vite assets are filled into
 // this cache at runtime after the new shell is installed.
-const CACHE = "beam-v10";
+const CACHE = "beam-v11";
 const SHELL = ["./", "./index.html", "./send/", "./receive/", "./beacon/"];
 
 self.addEventListener("install", (event) => {

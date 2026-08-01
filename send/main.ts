@@ -14,9 +14,12 @@ import {
   CUSTOM_GRID_SIZES,
   CUSTOM_HEADER_LEN,
   createCustomEnvelope,
+  createTricolorEnvelope,
   createCustomLayout,
   customSymbolAt,
-  customCapacityForBits,
+  customCapacityForMode,
+  tricolorSymbolAt,
+  type CustomMode,
 } from "../shared/custom-frame";
 
 const MARGIN = 4;
@@ -125,15 +128,16 @@ async function handleFile(file: File) {
 
 async function startStream(payload: Uint8Array) {
   const gen = ++generation;
-  const mode = cfgMode.value as "mono" | "binary";
+  const mode = cfgMode.value as "mono" | CustomMode;
   const txFps = Number(cfgFps.value);
   const ecc = cfgEcc.value as "L" | "M" | "Q" | "H";
   const displayPx = Number(cfgSize.value);
-  const customLayout = mode === "binary"
-    ? createCustomLayout(selectGridSize(displayPx))
+  const customMode = mode === "mono" ? null : mode;
+  const customLayout = customMode
+    ? createCustomLayout(selectGridSize(displayPx), customMode)
     : null;
   const frameBytes = customLayout
-    ? customCapacityForBits(customLayout, CUSTOM_BINARY_SYMBOL_BITS) - CUSTOM_HEADER_LEN
+    ? customCapacityForMode(customLayout, customMode!) - CUSTOM_HEADER_LEN
     : Number(cfgBytes.value);
 
   const random = new Uint32Array(1);
@@ -164,7 +168,6 @@ async function startStream(payload: Uint8Array) {
   const queue: ImageData[] = [];
   let nextSeq = 0;
   let pumpScheduled = false;
-  const customBits = CUSTOM_BINARY_SYMBOL_BITS;
 
   const sizeCanvas = () => {
     const dpr = window.devicePixelRatio || 1;
@@ -182,7 +185,7 @@ async function startStream(payload: Uint8Array) {
   };
 
   if (customLayout) {
-    const capacity = customCapacityForBits(customLayout, customBits);
+    const capacity = customCapacityForMode(customLayout, customMode!);
     if (CUSTOM_HEADER_LEN + frameBytes > capacity) {
       throw new Error(`tile carrier holds ${capacity - CUSTOM_HEADER_LEN} raw bytes/frame`);
     }
@@ -190,7 +193,7 @@ async function startStream(payload: Uint8Array) {
     sizeCanvas();
     specs.textContent =
       `${currentFileName} (${Math.round(payload.length / 1024)} KB) · ` +
-      `${txFps} FPS · ${frameBytes} bytes/frame · binary tiles · ` +
+      `${txFps} FPS · ${frameBytes} bytes/frame · ${customMode === "tricolor" ? "red/green/black" : "binary tiles"} · ` +
       `${customLayout.size}×${customLayout.size} · K=${encoder.k}`;
   }
 
@@ -198,11 +201,10 @@ async function startStream(payload: Uint8Array) {
     const bytes = packFrame({ ...header, seq: nextSeq }, encoder.encode(nextSeq));
     nextSeq++;
     if (customLayout) {
-      const envelope = createCustomEnvelope(
-        bytes,
-        customCapacityForBits(customLayout, customBits),
-        customBits,
-      );
+      const capacity = customCapacityForMode(customLayout, customMode!);
+      const envelope = customMode === "tricolor"
+        ? createTricolorEnvelope(bytes, capacity)
+        : createCustomEnvelope(bytes, capacity, CUSTOM_BINARY_SYMBOL_BITS);
       const padSeed = fnv1a(envelope);
       const total = customLayout.size + 2 * MARGIN;
       const img = new ImageData(total, total);
@@ -228,14 +230,18 @@ async function startStream(payload: Uint8Array) {
             continue;
           }
           const symbol = calibrationIndex === 0xff
-            ? customSymbolAt(
-              envelope,
-              customLayout.positionIndex[matrixIndex] ?? 0,
-              customBits,
-              padSeed,
-            )
+            ? customMode === "tricolor"
+              ? tricolorSymbolAt(envelope, customLayout.positionIndex[matrixIndex] ?? 0, padSeed)
+              : customSymbolAt(
+                envelope,
+                customLayout.positionIndex[matrixIndex] ?? 0,
+                CUSTOM_BINARY_SYMBOL_BITS,
+                padSeed,
+              )
             : customLayout.calibrationSymbols[calibrationIndex] ?? 0;
-          pixels[destination] = symbol ? 0xff000000 : 0xffffffff;
+          pixels[destination] = customMode === "tricolor"
+            ? ([0xff0000ff, 0xff00ff00, 0xff000000] as const)[symbol]!
+            : symbol ? 0xff000000 : 0xffffffff;
         }
       }
       return img;
@@ -324,10 +330,10 @@ async function startStream(payload: Uint8Array) {
 }
 
 function syncTuningOptions() {
-  const binary = cfgMode.value === "binary";
-  cfgDensity.disabled = !binary;
-  cfgBytes.disabled = binary;
-  cfgEcc.disabled = binary;
+  const customMode = cfgMode.value === "mono" ? null : cfgMode.value as CustomMode;
+  cfgDensity.disabled = !customMode;
+  cfgBytes.disabled = Boolean(customMode);
+  cfgEcc.disabled = Boolean(customMode);
   const ecc = cfgEcc.value as keyof typeof MAX_FRAME_BYTES_BY_ECC;
   const maxBytes = MAX_FRAME_BYTES_BY_ECC[ecc];
   let frameBytes = Number(cfgBytes.value);
@@ -346,10 +352,10 @@ function syncTuningOptions() {
     option.disabled = MAX_FRAME_BYTES_BY_ECC[optionEcc] < frameBytes;
   }
   const selectedSize = selectGridSize(Number(cfgSize.value));
-  const selectedLayout = createCustomLayout(selectedSize);
-  const selectedBytes = customCapacityForBits(selectedLayout, CUSTOM_BINARY_SYMBOL_BITS) - CUSTOM_HEADER_LEN;
-  tuningHint.textContent = binary
-    ? `Binary ${selectedSize}×${selectedSize}: ${selectedBytes.toLocaleString()} raw bytes/frame. Auto scales from phone to TV; 512 is manual for 4K plus 1920+ camera capture.`
+  const selectedLayout = createCustomLayout(selectedSize, customMode ?? "binary");
+  const selectedBytes = customCapacityForMode(selectedLayout, customMode ?? "binary") - CUSTOM_HEADER_LEN;
+  tuningHint.textContent = customMode
+    ? `${customMode === "tricolor" ? "Tricolor red/green/black" : "Binary"} ${selectedSize}×${selectedSize}: ${selectedBytes.toLocaleString()} protected bytes/frame. Auto scales from phone to TV; 512 is manual for 4K plus 1920+ camera capture.`
     : `Standard monochrome QR compatibility mode. For ECC ${ecc}, the maximum profile is ${maxBytes} bytes/frame.`;
 }
 

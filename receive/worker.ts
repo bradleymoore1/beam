@@ -8,8 +8,9 @@ import { prepareZXingModule, readBarcodes } from "zxing-wasm/reader";
 import { decodeBeaconFrameText } from "../shared/beacon-frame";
 import {
   createCustomLayout,
-  customGridSizeFromLocator,
+  customLocatorInfo,
   decodeCustomImage,
+  type CustomMode,
   type CustomPosition,
 } from "../shared/custom-frame";
 
@@ -25,7 +26,7 @@ const ctx = self as unknown as {
   postMessage(msg: unknown, transfer?: Transferable[]): void;
 };
 
-let trackedCustom: { size: number; positions: CustomPosition[] } | null = null;
+let trackedCustom: { size: number; mode: CustomMode; positions: CustomPosition[] } | null = null;
 
 ctx.onmessage = async (e: MessageEvent) => {
   const { id, buf, w, h } = e.data as { id: number; buf: ArrayBuffer; w: number; h: number };
@@ -38,7 +39,7 @@ ctx.onmessage = async (e: MessageEvent) => {
       const trackedBytes = decodeCustomImage(
         img,
         trackedCustom.positions,
-        createCustomLayout(trackedCustom.size),
+        createCustomLayout(trackedCustom.size, trackedCustom.mode),
       );
       if (trackedBytes) {
         ctx.postMessage({ id, bytes: trackedBytes }, [trackedBytes.buffer]);
@@ -59,15 +60,21 @@ ctx.onmessage = async (e: MessageEvent) => {
       return;
     }
     const customCarriers = carriers
-      .map((result) => ({ result, size: customGridSizeFromLocator(result.bytes) }))
-      .filter((entry) => entry.size !== null);
-    const customSize = customCarriers[0]?.size;
+      .map((result) => ({ result, info: customLocatorInfo(result.bytes) }))
+      .filter((entry) => entry.info !== null);
+    const customInfo = customCarriers[0]?.info;
+    const customSize = customInfo?.size;
+    const customMode = customInfo?.mode;
     const customLocators = customCarriers
-      .filter((entry) => entry.size === customSize)
+      .filter((entry) => entry.info?.size === customSize && entry.info?.mode === customMode)
       .map((entry) => entry.result.position);
-    if (customSize && customLocators.length >= 4) {
-      trackedCustom = { size: customSize, positions: customLocators };
-      const bytes = decodeCustomImage(img, customLocators, createCustomLayout(customSize));
+    if (customSize && customMode && customLocators.length >= 4) {
+      trackedCustom = { size: customSize, mode: customMode, positions: customLocators };
+      const bytes = decodeCustomImage(
+        img,
+        customLocators,
+        createCustomLayout(customSize, customMode),
+      );
       ctx.postMessage({ id, bytes });
       return;
     }

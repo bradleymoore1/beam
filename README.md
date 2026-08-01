@@ -118,7 +118,7 @@ the camera starts.
 | setting | default | notes |
 |---|---|---|
 | channel | standard QR | proven default; binary tiles are experimental until validated on the specific camera/display pair |
-| tx fps | 24 | proven monochrome setting; reduce if camera exposure straddles display refreshes |
+| tx fps | 20 | aligns cleanly with common 30/60 fps phone capture and yields a 29.3 KB/s raw QR ceiling |
 | bytes / frame | automatic | binary mode selects 176², 256², or 352² from screen size; 512² is available manually for 4K |
 
 The parent experiment's measured ceiling with this exact architecture plus
@@ -143,6 +143,14 @@ At 20 displayed frames per second their ceilings are about 33 KB/s, 75 KB/s,
 147 KB/s, and 318 KB/s before fountain overhead and dropped frames. The 512
 profile needs a 4K-class sender and 1920-wide or better camera capture; it is
 manual because the default 1280-wide phone capture does not resolve it reliably.
+
+The opt-in tricolor carrier uses calibrated red, green, and black data tiles
+while keeping locator quiet zones white. It encodes actual base-3 symbols with
+an interleaved ternary Hamming(13,10) code, so one bad trit per codeword is
+corrected. Protected capacities are 3,865, 8,880, 17,405, and 37,665 bytes per
+frame: about 77 KB/s on the phone profile at 20 FPS before fountain overhead
+and dropped frames. The receiver learns the observed RGB palette from repeated
+calibration patches in each frame instead of assuming ideal display colors.
 
 This deliberately chooses fewer states with much wider signal margins. A
 camera must distinguish each state under autofocus, motion blur, exposure,
