@@ -28,6 +28,11 @@ constexpr uint16_t MINT = 0xA7F5;
 constexpr uint16_t GOLD = 0xFDCB;
 constexpr uint16_t CORAL = 0xFB4E;
 constexpr uint16_t MUTED = 0x9B3B;
+// Four bright and four dark states. Every state stays on the correct side of
+// the QR luminance threshold, so the standard decoder remains a reliable
+// fallback while playback visibly exercises the display's chroma channel.
+constexpr uint16_t LIGHT_RGB[4] = {0xF79E, 0xFEDB, 0xDFFB, 0xDF3F};
+constexpr uint16_t DARK_RGB[4] = {0x1083, 0x4003, 0x0204, 0x10AA};
 }  // namespace Color
 
 constexpr size_t MAX_FILES = 8;
@@ -536,6 +541,7 @@ void sendJson(int code, const String &body) {
 void handleManifest() { sendJson(200, manifestJson()); }
 
 void handleRoot() {
+  server.sendHeader("Cache-Control", "no-store");
   server.send_P(200, "text/html; charset=utf-8", UPLOAD_HTML);
 }
 
@@ -748,13 +754,17 @@ void drawQr(esp_qrcode_handle_t code) {
     display->fillRect(x, y, total, total, Color::PAPER);
     for (int row = 0; row < modules; ++row) {
       for (int column = 0; column < modules; ++column) {
-        if (!esp_qrcode_get_module(code, column, row)) continue;
+        const bool dark = esp_qrcode_get_module(code, column, row);
+        const size_t sampleIndex = static_cast<size_t>(row * modules + column);
+        const uint8_t source = playbackFrame[sampleIndex % sizeof(playbackFrame)];
+        const uint8_t shift = static_cast<uint8_t>((sampleIndex & 3u) * 2u);
+        const uint8_t chroma = (source >> shift) & 3u;
         const int left = x + static_cast<int>((column + 4) * moduleScale + 0.5f);
         const int right = x + static_cast<int>((column + 5) * moduleScale + 0.5f);
         const int top = y + static_cast<int>((row + 4) * moduleScale + 0.5f);
         const int bottom = y + static_cast<int>((row + 5) * moduleScale + 0.5f);
         display->fillRect(left, top, max(1, right - left), max(1, bottom - top),
-                          Color::NIGHT);
+                          dark ? Color::DARK_RGB[chroma] : Color::LIGHT_RGB[chroma]);
       }
     }
     return;
@@ -883,7 +893,9 @@ void setupWifi() {
 
 void setupServer() {
   server.enableCORS(true);
-  server.on("/", HTTP_GET, handleBrowse);
+  // The OS captive-portal mini browser is the shortest path into the beacon.
+  // Make every connectivity probe and unknown GET land directly on upload.
+  server.on("/", HTTP_GET, handleRoot);
   server.on("/upload", HTTP_GET, handleRoot);
   server.on("/admin", HTTP_GET, handleRoot);
   server.on("/browse", HTTP_GET, handleBrowse);
@@ -891,13 +903,14 @@ void setupServer() {
   server.on("/api/upload", HTTP_POST, handleUploadDone, handleUploadData);
   server.on("/api/file", HTTP_DELETE, handleDelete);
   server.on("/download", HTTP_GET, handleDownload);
-  server.on("/generate_204", HTTP_GET, handleBrowse);
-  server.on("/hotspot-detect.html", HTTP_GET, handleBrowse);
-  server.on("/connecttest.txt", HTTP_GET, handleBrowse);
-  server.on("/ncsi.txt", HTTP_GET, handleBrowse);
+  server.on("/generate_204", HTTP_GET, handleRoot);
+  server.on("/hotspot-detect.html", HTTP_GET, handleRoot);
+  server.on("/connecttest.txt", HTTP_GET, handleRoot);
+  server.on("/ncsi.txt", HTTP_GET, handleRoot);
+  server.on("/fwlink", HTTP_GET, handleRoot);
   server.onNotFound([]() {
     if (server.method() == HTTP_GET) {
-      handleBrowse();
+      handleRoot();
     } else {
       server.send(404, "text/plain; charset=utf-8", "Not found");
     }

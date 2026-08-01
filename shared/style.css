@@ -35,6 +35,29 @@ body {
     text-align: center;
 }
 
+.scanner-page {
+    justify-content: flex-start;
+    padding: max(4.5rem, calc(env(safe-area-inset-top) + 3.5rem)) 1rem 3rem;
+}
+
+.scanner-shell {
+    width: min(680px, 100%);
+    text-align: center;
+    padding: clamp(1.25rem, 4vw, 2.25rem);
+    border: 1px solid var(--border-color);
+    border-radius: 28px;
+    background: linear-gradient(145deg, rgba(255,255,255,.075), rgba(255,255,255,.025));
+    box-shadow: 0 30px 80px rgba(0,0,0,.38), inset 0 1px rgba(255,255,255,.06);
+}
+
+.scanner-kicker {
+    color: var(--accent-secondary);
+    font-size: .72rem;
+    font-weight: 800;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+}
+
 h1 {
     font-size: 4rem;
     font-weight: 700;
@@ -225,6 +248,22 @@ button:focus-visible, .button:focus-visible, .dropzone:focus-visible, summary:fo
     background: rgba(0, 0, 0, .72);
 }
 
+.focus-button {
+    grid-column: 1 / -1;
+    padding: .55rem .8rem;
+    font-size: .82rem;
+    color: #fff;
+    background: rgba(255,255,255,.1);
+    border: 1px solid rgba(255,255,255,.16);
+    box-shadow: none;
+}
+
+.focus-button:hover {
+    transform: none;
+    box-shadow: none;
+    background: rgba(255,255,255,.16);
+}
+
 .zoom-step {
     min-width: 2.25rem;
     padding: .35rem .65rem;
@@ -365,6 +404,7 @@ details.settings summary {
     h1 { font-size: 3rem; }
     .action-buttons { flex-direction: column; }
     .action-buttons a { width: 100%; }
+    .scanner-shell { border-radius: 22px; padding: 1.15rem; }
 }
 
 @media (max-width: 420px) {

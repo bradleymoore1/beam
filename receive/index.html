@@ -15,8 +15,10 @@
     <title>Beam — Receive</title>
     <link rel="stylesheet" href="../shared/style.css" />
   </head>
-  <body>
+  <body class="scanner-page">
     <a href="../" class="back-link">← Home</a>
+    <main class="scanner-shell">
+    <div class="scanner-kicker">Beam optical receiver</div>
     <h1>Beam</h1>
     <h2>Receive a file</h2>
 
@@ -77,11 +79,13 @@
         <button class="zoom-step" id="zoom-plus" type="button" aria-label="Zoom in">+</button>
         <output class="zoom-value" id="zoom-value">1.0×</output>
         <span class="zoom-mode" id="zoom-mode">digital crop</span>
+        <button class="focus-button" id="focus-camera" type="button">Auto focus</button>
       </div>
     </div>
 
     <div class="progress" id="progress" style="display: none"><div id="bar"></div></div>
     <div id="result"></div>
+    </main>
     <script>
         if ("serviceWorker" in navigator && "%MODE%" === "production") {
             navigator.serviceWorker.register("%BASE_URL%sw.js").catch(function () {});

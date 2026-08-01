@@ -13,6 +13,7 @@ const zoomValue = document.getElementById("zoom-value") as HTMLElement;
 const zoomMode = document.getElementById("zoom-mode") as HTMLElement;
 const zoomMinus = document.getElementById("zoom-minus") as HTMLButtonElement;
 const zoomPlus = document.getElementById("zoom-plus") as HTMLButtonElement;
+const focusButton = document.getElementById("focus-camera") as HTMLButtonElement;
 const result = document.getElementById("result") as HTMLElement;
 const ssidEl = document.getElementById("ssid")!;
 const passwordEl = document.getElementById("password")!;
@@ -87,6 +88,7 @@ async function start() {
       mode: zoomMode,
       minus: zoomMinus,
       plus: zoomPlus,
+      focus: focusButton,
     });
     captureGen++;
     scheduleFrame(captureGen);

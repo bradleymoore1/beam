@@ -24,6 +24,7 @@ const zoomValue = document.getElementById("zoom-value") as HTMLElement;
 const zoomMode = document.getElementById("zoom-mode") as HTMLElement;
 const zoomMinus = document.getElementById("zoom-minus") as HTMLButtonElement;
 const zoomPlus = document.getElementById("zoom-plus") as HTMLButtonElement;
+const focusButton = document.getElementById("focus-camera") as HTMLButtonElement;
 const progressEl = document.getElementById("progress")!;
 const bar = document.getElementById("bar")!;
 const result = document.getElementById("result")!;
@@ -116,6 +117,7 @@ async function start() {
     mode: zoomMode,
     minus: zoomMinus,
     plus: zoomPlus,
+    focus: focusButton,
   });
   stats.textContent = `camera ${stream.getVideoTracks()[0]?.getSettings().width}×${stream.getVideoTracks()[0]?.getSettings().height}@${stream.getVideoTracks()[0]?.getSettings().frameRate} — searching for a stream…`;
 
